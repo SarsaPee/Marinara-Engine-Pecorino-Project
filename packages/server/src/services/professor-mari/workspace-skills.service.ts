@@ -38,7 +38,7 @@ type SkillUpdate = {
 const MAX_SKILL_CONTENT_LENGTH = 200_000;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 const SAFE_SKILL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-const DEFAULT_WORKSPACE_SKILLS: ReadonlyArray<{ id: string; name: string; description: string; content: string }> = [
+export const DEFAULT_WORKSPACE_SKILLS_FOR_TEST: ReadonlyArray<{ id: string; name: string; description: string; content: string }> = [
   {
     id: "runtime-forensics",
     name: "runtime-forensics",
@@ -51,12 +51,26 @@ Preferred tool order:
 1. \`inspect_chat_runtime\` for a high-level snapshot of a specific chat.
 2. \`inspect_turn_tag_packet\` to read the stored \`turn_tag_packet_v1\` or another agent variable.
 3. \`inspect_agent_activity\` to see active agent configs, phases, and stack/default assignment hints.
-4. \`inspect_lorebook_scope\` to inspect active lorebooks plus linked/global lorebook candidates for that chat.
-5. \`read_chat\` if you need to inspect the recent conversation that produced the runtime state.
+4. \`inspect_agent_settings\` to fetch deep read-only per-agent settings, prompt wiring, bindings, and raw/parsed settings for a specific chat.
+5. \`inspect_lorebook_scope\` to inspect active lorebooks plus linked/global lorebook candidates for that chat.
+6. \`read_chat\` if you need to inspect the recent conversation that produced the runtime state.
 
 Rules:
 - Prefer tool evidence over guesswork.
 - Distinguish stored chat metadata from per-turn runtime inference.
+- Distinguish four buckets explicitly when useful: tool-confirmed facts, summary from previous inspection, inference, and unavailable/not found.
+- If the user asks for runtime detail that is not present in the most recent tool result, call the relevant inspection tool again instead of pretending you already fetched it.
+- If you answer from previous tool output rather than a fresh call, say so plainly.
+- If you offer a next inspection action and the user replies with any clear affirmative confirmation, you must either run the relevant tool for that action or clearly state that no current workspace tool can fetch the requested data.
+- Do not repeat the previous inspection packet as if it were newly fetched.
+- Do not offer the same next action again after the user has already confirmed it.
+- If you answer from prior tool output after a confirmation, begin plainly with: "Using the previous inspection result..."
+- Treat Mari workspace tools and chat generation/runtime tools as different things. If a tool result shows no active chat-generation tool ids, say exactly that; do not say no tools are available when Mari workspace inspection tools are still available.
+- If agent phase comes directly from \`inspect_agent_activity\`, label it as tool-confirmed. If phase must be guessed from config shape or naming, label it inferred. If you do not have phase data, say unavailable.
+- If the user asks for resolved agent settings summaries or tells you to continue after offering them, use \`inspect_agent_settings\`.
+- \`inspect_agent_settings\` is the deep read-only path. It can expose raw settings, parsed settings, prompt template, connection wiring, lorebook bindings, tool allowance, and available/unavailable fields. Do not mutate anything. Decrypted secrets are still out of scope unless a future tool explicitly adds them.
+- After an unavailable-data answer, stop unless the user asks for a different available inspection.
+- For short follow-ups like "do it", "y", or "go on", confirm whether you are summarizing previous inspection or running another tool. If new evidence is needed, run the tool.
 - When debugging roleplay stacks, name exact agent ids/types and exact lorebook ids/names when that helps.
 - If the issue spans multiple chats or forks, use \`list_chats\` and \`search_chat_messages\` first to identify the correct chat ids before reading deeper.`,
   },
@@ -78,9 +92,13 @@ Rules:
 - Stay read-only unless the user explicitly asks for a separate mutation task.
 - If several chats match, compare ids, names, mode, and timestamps before concluding.
 - Quote or summarize only the relevant turns instead of dumping entire transcripts unless the user explicitly asks for the full thing.
+- Treat \`read_chat\` and \`search_chat_messages\` as bounded inspection tools. Prefer excerpts and recent windows unless the user explicitly asks for broader retrieval.
+- If a follow-up question needs data you have not actually retrieved yet, run the relevant tool again instead of leaning on memory from a prior answer.
+- If you are answering from the previous inspection rather than a fresh tool call, say so plainly.
 - For lore/continuity questions, combine \`search_chat_messages\` with \`inspect_lorebook_scope\` when you need both story evidence and runtime context.`,
   },
 ] as const;
+const DEFAULT_WORKSPACE_SKILLS = DEFAULT_WORKSPACE_SKILLS_FOR_TEST;
 
 function rootDir() {
   return join(DATA_DIR, ".mari-workspace", "skills");
@@ -374,20 +392,33 @@ export class ProfessorMariWorkspaceSkillsService {
 
   private async ensureDefaultSkills() {
     const records = await this.readRecords();
-    const existingIds = new Set(records.map((record) => record.id));
+    const existingById = new Map(records.map((record) => [record.id, record] as const));
     const timestamp = now();
     const nextRecords = [...records];
     let changed = false;
 
     for (const skill of DEFAULT_WORKSPACE_SKILLS) {
-      if (existingIds.has(skill.id)) continue;
       const content = buildSkillContent({
         name: skill.name,
         description: skill.description,
         content: skill.content,
       });
+      const existing = existingById.get(skill.id);
       await mkdir(skillDir(skill.id), { recursive: true });
       await writeFile(skillFilePath(skill.id), content, "utf8");
+      if (existing) {
+        const index = nextRecords.findIndex((record) => record.id === skill.id);
+        if (index >= 0) {
+          nextRecords[index] = {
+            ...existing,
+            name: skill.name,
+            description: skill.description,
+            updatedAt: timestamp,
+          };
+          changed = true;
+        }
+        continue;
+      }
       nextRecords.push({
         id: skill.id,
         name: skill.name,
@@ -396,7 +427,6 @@ export class ProfessorMariWorkspaceSkillsService {
         createdAt: timestamp,
         updatedAt: timestamp,
       });
-      existingIds.add(skill.id);
       changed = true;
     }
 

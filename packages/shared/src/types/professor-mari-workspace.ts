@@ -16,6 +16,7 @@ export type MariWorkspaceToolName =
   | "inspect_chat_runtime"
   | "inspect_turn_tag_packet"
   | "inspect_agent_activity"
+  | "inspect_agent_settings"
   | "inspect_lorebook_scope";
 
 export interface MariWorkspaceToolTrace {

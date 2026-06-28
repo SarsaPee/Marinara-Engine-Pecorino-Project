@@ -130,6 +130,7 @@ const WORKSPACE_TOOLS: MariWorkspaceToolName[] = [
   "inspect_chat_runtime",
   "inspect_turn_tag_packet",
   "inspect_agent_activity",
+  "inspect_agent_settings",
   "inspect_lorebook_scope",
 ];
 const RUNTIME_API_KEY = "local-marinara-runtime";
@@ -141,9 +142,27 @@ const MAX_PARALLEL_READONLY_COMMANDS = 4;
 const RECENT_WORKSPACE_CONTINUITY_LIMIT = 4;
 const COMMAND_OUTPUT_LIMIT = 32_000;
 const COMMAND_FILE_READ_LIMIT = 256_000;
+export const DEFAULT_MARI_LIST_CHATS_LIMIT = 30;
+export const DEFAULT_MARI_READ_CHAT_LIMIT = 40;
+export const DEFAULT_MARI_SEARCH_CHAT_MESSAGES_LIMIT = 40;
+export const MAX_MARI_CHAT_FORENSICS_LIMIT = 200;
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
 const MAX_BASH_TIMEOUT_SECONDS = 300;
 const MAX_WALK_ENTRIES = 12_000;
+const READ_ONLY_WORKSPACE_COMMAND_NAMES = new Set<MariWorkspaceToolName>([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "list_chats",
+  "read_chat",
+  "search_chat_messages",
+  "inspect_chat_runtime",
+  "inspect_turn_tag_packet",
+  "inspect_agent_activity",
+  "inspect_agent_settings",
+  "inspect_lorebook_scope",
+]);
 const SKIPPED_DIRS = new Set([
   ".git",
   "node_modules",
@@ -325,6 +344,20 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
     },
   },
   {
+    name: "inspect_agent_settings",
+    description:
+      "Inspect deep read-only agent settings for active agents in a chat, including parsed settings, raw settings, prompt template, bindings, and connection wiring.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+        agentId: { type: "string" },
+        agentType: { type: "string" },
+      },
+      required: ["chatId"],
+    },
+  },
+  {
     name: "inspect_lorebook_scope",
     description: "Inspect active lorebooks and linked/global lorebook candidates for a specific chat.",
     parameters: {
@@ -407,6 +440,7 @@ Workspace defaults:
 - Inspect before claiming facts. Verify after changing anything.
 - Ask for approval before applying/saving destructive or user-visible changes.
 - Keep user-facing replies concise and human-readable.
+- If you offer a next inspection step and the user confirms it with a short reply like "go", "yes", or "do it", either run the relevant read-only tool or say clearly that the requested data is unavailable with current workspace tools. Do not repeat old inspection output as if it were new. Do not re-offer the same unavailable step in a loop.
 
 Command families:
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
@@ -561,6 +595,22 @@ function stringifyOutput(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function buildMariForensicsEnvelope(input: {
+  tool: MariWorkspaceToolName;
+  inspectedChatId?: string | null;
+  found?: boolean;
+  partial?: boolean;
+  data: Record<string, unknown>;
+}) {
+  return {
+    source: `professor_mari_workspace.${input.tool}`,
+    inspectedChatId: input.inspectedChatId ?? null,
+    found: input.found ?? true,
+    partial: input.partial ?? false,
+    ...input.data,
+  };
 }
 
 function compactMutationResult(result: MariDbCommandResult): MariDbCommandResult | Record<string, unknown> {
@@ -1134,20 +1184,12 @@ function isWithin(parent: string, child: string): boolean {
   return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}${process.platform === "win32" ? "\\" : "/"}`);
 }
 
+export function isReadOnlyMariWorkspaceToolName(name: MariWorkspaceToolName): boolean {
+  return READ_ONLY_WORKSPACE_COMMAND_NAMES.has(name);
+}
+
 function isReadOnlyWorkspaceCommand(command: WorkspaceCommandCall): boolean {
-  return (
-    command.name === "read" ||
-    command.name === "grep" ||
-    command.name === "find" ||
-    command.name === "ls" ||
-    command.name === "list_chats" ||
-    command.name === "read_chat" ||
-    command.name === "search_chat_messages" ||
-    command.name === "inspect_chat_runtime" ||
-    command.name === "inspect_turn_tag_packet" ||
-    command.name === "inspect_agent_activity" ||
-    command.name === "inspect_lorebook_scope"
-  );
+  return isReadOnlyMariWorkspaceToolName(command.name);
 }
 
 function visibleTextRequestsUserApproval(text: string): boolean {
@@ -1211,6 +1253,7 @@ function workspaceCommandValidationIssue(command: WorkspaceCommandCall): string 
       return requireString("query");
     case "inspect_chat_runtime":
     case "inspect_agent_activity":
+    case "inspect_agent_settings":
     case "inspect_lorebook_scope":
       return requireString("chatId");
     case "inspect_turn_tag_packet":
@@ -1750,6 +1793,8 @@ ${sections.join("\n\n")}
         return this.commandInspectTurnTagPacket(command.arguments);
       case "inspect_agent_activity":
         return this.commandInspectAgentActivity(command.arguments);
+      case "inspect_agent_settings":
+        return this.commandInspectAgentSettings(command.arguments);
       case "inspect_lorebook_scope":
         return this.commandInspectLorebookScope(command.arguments);
       case "write":
@@ -1933,7 +1978,7 @@ ${sections.join("\n\n")}
     const chatStorage = createChatsStorage(this.app.db);
     const rawQuery = stringArg(args, "query", "").trim().toLowerCase();
     const requestedMode = normalizeChatMode(args.mode);
-    const limit = numberArg(args, "limit", 30, 1, 200);
+    const limit = numberArg(args, "limit", DEFAULT_MARI_LIST_CHATS_LIMIT, 1, MAX_MARI_CHAT_FORENSICS_LIMIT);
     const chats = await chatStorage.list();
     const filtered = chats
       .filter((chat) => !requestedMode || chat.mode === requestedMode)
@@ -1949,12 +1994,19 @@ ${sections.join("\n\n")}
         updatedAt: chat.updatedAt ?? null,
         createdAt: chat.createdAt ?? null,
       }));
-    return stringifyOutput({
-      query: rawQuery || null,
-      mode: requestedMode,
-      count: filtered.length,
-      chats: filtered,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "list_chats",
+        partial: filtered.length === limit,
+        data: {
+          query: rawQuery || null,
+          mode: requestedMode,
+          count: filtered.length,
+          limit,
+          chats: filtered,
+        },
+      }),
+    );
   }
 
   private async loadChatSnapshot(chatId: string) {
@@ -1983,6 +2035,7 @@ ${sections.join("\n\n")}
           name: config.name,
           description: config.description,
           phase: config.phase,
+          phaseStatus: config.phase ? "tool_confirmed" : "unavailable",
           enabled: config.enabled,
           connectionId: config.connectionId ?? null,
           order: resolveActiveAgentSelectionOrder(input.activeAgentIds, { id: config.id, type: config.type }),
@@ -2015,7 +2068,7 @@ ${sections.join("\n\n")}
     const includeMessages = booleanArg(args, "includeMessages", true);
     const includeMetadata = booleanArg(args, "includeMetadata", true);
     const includeExtra = booleanArg(args, "includeExtra", false);
-    const limit = numberArg(args, "limit", 40, 1, 200);
+    const limit = numberArg(args, "limit", DEFAULT_MARI_READ_CHAT_LIMIT, 1, MAX_MARI_CHAT_FORENSICS_LIMIT);
     const { chat, messages, metadata } = await this.loadChatSnapshot(chatId);
     const result: Record<string, unknown> = {
       chat: {
@@ -2045,7 +2098,27 @@ ${sections.join("\n\n")}
     }
 
     result.messageCount = messages.length;
-    return stringifyOutput(result);
+    result.messageWindow = includeMessages
+      ? {
+          returned: Math.min(messages.length, limit),
+          limit,
+          partial: messages.length > limit,
+        }
+      : {
+          returned: 0,
+          limit,
+          partial: false,
+          unavailable: "Messages were not requested.",
+        };
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "read_chat",
+        inspectedChatId: chat.id,
+        found: true,
+        partial: includeMessages ? messages.length > limit : false,
+        data: result,
+      }),
+    );
   }
 
   private async commandSearchChatMessages(args: Record<string, unknown>): Promise<string> {
@@ -2053,7 +2126,7 @@ ${sections.join("\n\n")}
     const query = stringArg(args, "query").trim();
     const requestedChatId = stringArg(args, "chatId", "").trim();
     const requestedMode = normalizeChatMode(args.mode);
-    const limit = numberArg(args, "limit", 40, 1, 200);
+    const limit = numberArg(args, "limit", DEFAULT_MARI_SEARCH_CHAT_MESSAGES_LIMIT, 1, MAX_MARI_CHAT_FORENSICS_LIMIT);
     const ignoreCase = booleanArg(args, "ignoreCase", true);
     const chats = requestedChatId
       ? [await chatStorage.getById(requestedChatId)].filter((chat): chat is NonNullable<typeof chat> => !!chat)
@@ -2085,13 +2158,22 @@ ${sections.join("\n\n")}
       }
     }
 
-    return stringifyOutput({
-      query,
-      chatId: requestedChatId || null,
-      mode: requestedMode,
-      count: matches.length,
-      matches,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "search_chat_messages",
+        inspectedChatId: requestedChatId || null,
+        found: matches.length > 0,
+        partial: matches.length === limit,
+        data: {
+          query,
+          chatId: requestedChatId || null,
+          mode: requestedMode,
+          count: matches.length,
+          limit,
+          matches,
+        },
+      }),
+    );
   }
 
   private async commandInspectChatRuntime(args: Record<string, unknown>): Promise<string> {
@@ -2104,31 +2186,43 @@ ${sections.join("\n\n")}
     const { resolved, stackDefaults } = await this.resolveConfiguredActiveAgents({ activeAgentIds, mode });
     const agentVariables = normalizeAgentVariables(metadata.agentVariables);
 
-    return stringifyOutput({
-      chat: {
-        id: chat.id,
-        name: chat.name ?? null,
-        mode: chat.mode ?? null,
-        characterIds: parseStringArray(chat.characterIds),
-        personaId: chat.personaId ?? null,
-      },
-      toggles: {
-        enableAgents: metadata.enableAgents === true,
-        enableTools: metadata.enableTools === true,
-      },
-      active: {
-        agentIds: activeAgentIds,
-        toolIds: activeToolIds,
-        lorebookIds: activeLorebookIds,
-      },
-      stackDefaults,
-      turnTagPacket: parseTurnTagPacketFromChatMeta(metadata),
-      agentVariables: {
-        keys: Object.keys(agentVariables).sort(),
-        count: Object.keys(agentVariables).length,
-      },
-      resolvedAgents: resolved,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "inspect_chat_runtime",
+        inspectedChatId: chat.id,
+        found: true,
+        data: {
+          chat: {
+            id: chat.id,
+            name: chat.name ?? null,
+            mode: chat.mode ?? null,
+            characterIds: parseStringArray(chat.characterIds),
+            personaId: chat.personaId ?? null,
+          },
+          toggles: {
+            enableAgents: metadata.enableAgents === true,
+            enableTools: metadata.enableTools === true,
+          },
+          toolScope: {
+            workspaceInspectionToolsAvailable: [...WORKSPACE_TOOLS],
+            activeChatGenerationToolIds: activeToolIds,
+            activeChatGenerationToolIdsStatus:
+              activeToolIds.length > 0 ? "tool_confirmed" : "no active chat generation tool ids were reported",
+          },
+          active: {
+            agentIds: activeAgentIds,
+            lorebookIds: activeLorebookIds,
+          },
+          stackDefaults,
+          turnTagPacket: parseTurnTagPacketFromChatMeta(metadata),
+          agentVariables: {
+            keys: Object.keys(agentVariables).sort(),
+            count: Object.keys(agentVariables).length,
+          },
+          resolvedAgents: resolved,
+        },
+      }),
+    );
   }
 
   private async commandInspectTurnTagPacket(args: Record<string, unknown>): Promise<string> {
@@ -2138,18 +2232,27 @@ ${sections.join("\n\n")}
     const variables = normalizeAgentVariables(metadata.agentVariables);
     const raw = typeof variables[variableName] === "string" ? variables[variableName] : null;
 
-    return stringifyOutput({
-      chat: {
-        id: chat.id,
-        name: chat.name ?? null,
-        mode: chat.mode ?? null,
-      },
-      variableName,
-      found: raw !== null,
-      raw,
-      parsed: parseTurnTagPacket(raw),
-      defaultTurnTagPacket: variableName === "turn_tag_packet_v1" ? parseTurnTagPacketFromChatMeta(metadata) : null,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "inspect_turn_tag_packet",
+        inspectedChatId: chat.id,
+        found: raw !== null,
+        data: {
+          chat: {
+            id: chat.id,
+            name: chat.name ?? null,
+            mode: chat.mode ?? null,
+          },
+          variableName,
+          raw,
+          parsed: parseTurnTagPacket(raw),
+          defaultTurnTagPacket:
+            variableName === "turn_tag_packet_v1"
+              ? parseTurnTagPacketFromChatMeta(metadata)
+              : { unavailable: "Only returned automatically for turn_tag_packet_v1." },
+        },
+      }),
+    );
   }
 
   private async commandInspectAgentActivity(args: Record<string, unknown>): Promise<string> {
@@ -2169,17 +2272,166 @@ ${sections.join("\n\n")}
       ),
     );
 
-    return stringifyOutput({
-      chat: {
-        id: chat.id,
-        name: chat.name ?? null,
-        mode: chat.mode ?? null,
-      },
-      activeAgentIds,
-      resolvedAgents: resolved,
-      stackDefaults,
-      interestingVariables,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "inspect_agent_activity",
+        inspectedChatId: chat.id,
+        found: true,
+        data: {
+          chat: {
+            id: chat.id,
+            name: chat.name ?? null,
+            mode: chat.mode ?? null,
+          },
+          activeAgentIds,
+          resolvedAgents: resolved,
+          stackDefaults,
+          availableFields: {
+            activeAgentIds: "present",
+            resolvedAgents: "present",
+            phase: "present_on_resolved_agents",
+            phaseStatus: "present_on_resolved_agents",
+            interestingVariables: "present",
+            resolvedSettingsSummary: "unavailable",
+          },
+          unavailableFields: {
+            resolvedSettingsSummary:
+              "Current tools expose active agents/phases/activity, but not full resolved settings summaries.",
+          },
+          interestingVariables,
+        },
+      }),
+    );
+  }
+
+  private async commandInspectAgentSettings(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const requestedAgentId = stringArg(args, "agentId", "").trim();
+    const requestedAgentType = stringArg(args, "agentType", "").trim();
+    const { chat, metadata } = await this.loadChatSnapshot(chatId);
+    const mode = normalizeChatMode(chat.mode);
+    const activeAgentIds = parseStringArray(metadata.activeAgentIds);
+    const { resolved, stackDefaults } = await this.resolveConfiguredActiveAgents({ activeAgentIds, mode });
+    const agentStorage = createAgentsStorage(this.app.db);
+    const configs = await agentStorage.listEnabled();
+    const activeSet = new Set(activeAgentIds);
+    const resolvedById = new Map(resolved.map((agent) => [agent.id, agent] as const));
+    const filteredConfigs = configs
+      .filter((config) => matchesActiveAgentSelection(activeSet, { id: config.id, type: config.type }))
+      .filter((config) => {
+        if (requestedAgentId && config.id !== requestedAgentId) return false;
+        if (requestedAgentType && config.type !== requestedAgentType) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const left = resolveActiveAgentSelectionOrder(activeAgentIds, { id: a.id, type: a.type }) ?? Number.MAX_SAFE_INTEGER;
+        const right = resolveActiveAgentSelectionOrder(activeAgentIds, { id: b.id, type: b.type }) ?? Number.MAX_SAFE_INTEGER;
+        return left - right;
+      });
+
+    const summaries = await Promise.all(
+      filteredConfigs.map(async (config) => {
+        const parsedSettings = parseAgentSettingsRecord(config.settings);
+        const resolvedSummary = resolvedById.get(config.id);
+        const connection = config.connectionId ? await this.resolveConnection(config.connectionId) : null;
+        const promptTemplate = typeof config.promptTemplate === "string" ? config.promptTemplate : "";
+        const selectedByConfigId = activeAgentIds.includes(config.id);
+        const selectedByType = activeAgentIds.includes(config.type);
+        return {
+          id: config.id,
+          type: config.type,
+          name: config.name,
+          description: config.description,
+          phase: config.phase ?? null,
+          phaseStatus: resolvedSummary?.phaseStatus ?? (config.phase ? "tool_confirmed" : "unavailable"),
+          activation: {
+            selectedByChat: selectedByConfigId || selectedByType,
+            order: resolveActiveAgentSelectionOrder(activeAgentIds, { id: config.id, type: config.type }),
+            enabled: config.enabled,
+            source: selectedByConfigId ? "config_id" : selectedByType ? "type_id" : "builtin_alias",
+          },
+          outputMode: {
+            resultType: typeof parsedSettings.resultType === "string" ? parsedSettings.resultType : null,
+            includePreGenerationInjections: parsedSettings.includePreGenerationInjections === true,
+            available: typeof parsedSettings.resultType === "string" || parsedSettings.includePreGenerationInjections === true,
+          },
+          lorebookBindings: {
+            lorebookIds: parseStringArray(parsedSettings.lorebookIds),
+            useChatActiveLorebooks: parsedSettings.useChatActiveLorebooks === true,
+          },
+          toolAllowance: {
+            enableToolUse: parsedSettings.enableToolUse === true,
+            enabledToolIds: parseStringArray(parsedSettings.enabledToolIds),
+          },
+          runtimeSelection: resolvedSummary ?? null,
+          parsedSettings,
+          rawSettings: config.settings,
+          promptTemplate,
+          promptTemplateMeta: {
+            present: promptTemplate.trim().length > 0,
+            length: promptTemplate.length,
+          },
+          connection: connection
+            ? {
+                id: connection.id,
+                name: connection.name,
+                provider: connection.provider,
+                model: connection.model,
+                baseUrl: connection.baseUrl,
+                maxContext: connection.maxContext,
+                maxTokensOverride: connection.maxTokensOverride,
+                treatAsLocalEndpoint: connection.treatAsLocalEndpoint,
+                enableCaching: connection.enableCaching,
+                cachingAtDepth: connection.cachingAtDepth,
+                openrouterProvider: connection.openrouterProvider,
+                claudeFastMode: connection.claudeFastMode,
+              }
+            : null,
+          availableFields: {
+            phase: "present",
+            activation: "present",
+            outputMode: "present",
+            lorebookBindings: "present",
+            toolAllowance: "present",
+            parsedSettings: "present",
+            rawSettings: "present",
+            promptTemplate: "present",
+            runtimeSelection: "present_when_agent_was_resolved",
+            connection: config.connectionId ? "present_if_connection_found" : "unavailable",
+          },
+          unavailableFields: {
+            decryptedApiKey: "Unavailable from this tool.",
+          },
+        };
+      }),
+    );
+
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "inspect_agent_settings",
+        inspectedChatId: chat.id,
+        found: summaries.length > 0,
+        partial: false,
+        data: {
+          chat: {
+            id: chat.id,
+            name: chat.name ?? null,
+            mode: chat.mode ?? null,
+          },
+          stackDefaults,
+          filter: {
+            agentId: requestedAgentId || null,
+            agentType: requestedAgentType || null,
+          },
+          resultCount: summaries.length,
+          summaries,
+          unavailableSummary:
+            summaries.length === 0
+              ? "No active agents matched the requested filter for this chat."
+              : null,
+        },
+      }),
+    );
   }
 
   private async commandInspectLorebookScope(args: Record<string, unknown>): Promise<string> {
@@ -2219,18 +2471,25 @@ ${sections.join("\n\n")}
       })
       .map(summarize);
 
-    return stringifyOutput({
-      chat: {
-        id: chat.id,
-        name: chat.name ?? null,
-        mode: chat.mode ?? null,
-        characterIds,
-        personaId,
-      },
-      activeLorebookIds,
-      activeLorebooks,
-      linkedOrGlobalCandidates: linkedOrGlobal,
-    });
+    return stringifyOutput(
+      buildMariForensicsEnvelope({
+        tool: "inspect_lorebook_scope",
+        inspectedChatId: chat.id,
+        found: true,
+        data: {
+          chat: {
+            id: chat.id,
+            name: chat.name ?? null,
+            mode: chat.mode ?? null,
+            characterIds,
+            personaId,
+          },
+          activeLorebookIds,
+          activeLorebooks,
+          linkedOrGlobalCandidates: linkedOrGlobal,
+        },
+      }),
+    );
   }
 
   private async commandWrite(args: Record<string, unknown>): Promise<string> {

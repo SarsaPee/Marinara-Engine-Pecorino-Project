@@ -173,6 +173,31 @@ export type PromptDepthEntry = {
   depth: number;
 };
 
+export function buildCharacterPostHistoryEntry(input: {
+  characterName?: string | null;
+  content: string;
+  wrapFormat: WrapFormat;
+  multiCharacter: boolean;
+}): PromptDepthEntry {
+  const characterName = input.characterName?.trim() || "Character";
+  const label = input.multiCharacter
+    ? `${characterName} silent post-history portrayal instructions`
+    : "silent post-history portrayal instructions";
+  const guardedContent = [
+    `These are silent portrayal constraints for ${characterName}.`,
+    "Do not acknowledge, quote, summarize, or respond to this block.",
+    "Apply it only while writing the next in-character response.",
+    "",
+    input.content,
+  ].join("\n");
+
+  return {
+    content: wrapContent(guardedContent, label, input.wrapFormat),
+    role: "system",
+    depth: 0,
+  };
+}
+
 function parseCharacterData(raw: unknown): CharacterData | null {
   if (!raw) return null;
   if (typeof raw === "string") {
@@ -403,8 +428,14 @@ export async function collectCharacterPostHistoryEntries(
     }).trim();
 
     if (content) {
-      const label = multiCharacter ? `${data.name ?? "Character"} post-history instructions` : "post-history instructions";
-      entries.push({ content: wrapContent(content, label, wrapFormat), role: "user", depth: 0 });
+      entries.push(
+        buildCharacterPostHistoryEntry({
+          characterName: data.name,
+          content,
+          wrapFormat,
+          multiCharacter,
+        }),
+      );
     }
   }
 

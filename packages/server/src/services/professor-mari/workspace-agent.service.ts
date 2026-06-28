@@ -36,6 +36,7 @@ import {
   type APIProvider,
   type GenerationParameterSendMap,
 } from "@marinara-engine/shared";
+import type { ChatMode } from "@marinara-engine/shared";
 import type {
   MariDbCommandResult,
   MariWorkspaceConnectionSummary,
@@ -47,6 +48,20 @@ import type {
 import { getMariDbService } from "../mari-db/mari-db.service.js";
 import { getProfessorMariWorkspaceSkillsService } from "./workspace-skills.service.js";
 import { sidecarModelService } from "../sidecar/sidecar-model.service.js";
+import { createAgentsStorage } from "../storage/agents.storage.js";
+import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
+import { parseAgentSettingsRecord } from "@marinara-engine/shared";
+import {
+  normalizeAgentVariables,
+  parseTurnTagPacket,
+  parseTurnTagPacketFromChatMeta,
+} from "../agents/turn-tag-packet.js";
+import {
+  matchesActiveAgentSelection,
+  resolveActiveAgentSelectionOrder,
+} from "../generation/active-agent-selection.js";
+import { resolveEffectiveModeAgentDefaults } from "../../features/agent-stacks/adapters/resolve-effective-mode-agent-defaults.js";
+import { getDefaultAgentStackAssignmentConfig } from "../../features/agent-stacks/config/default-agent-stack-assignment-config.js";
 
 type DbConnectionWithKey = typeof apiConnections.$inferSelect & { apiKey: string };
 type WorkspaceConnection = Pick<
@@ -101,7 +116,22 @@ type AssistantWorkspaceAction = {
   assistantHistoryContent: string;
 };
 
-const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", "edit", "write", "bash"];
+const WORKSPACE_TOOLS: MariWorkspaceToolName[] = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "edit",
+  "write",
+  "bash",
+  "list_chats",
+  "read_chat",
+  "search_chat_messages",
+  "inspect_chat_runtime",
+  "inspect_turn_tag_packet",
+  "inspect_agent_activity",
+  "inspect_lorebook_scope",
+];
 const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
 const MAX_COMMAND_ROUNDS = 12;
@@ -218,6 +248,93 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
       required: ["command"],
     },
   },
+  {
+    name: "list_chats",
+    description: "List saved chats from Marinara, optionally filtered by name query or mode.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        mode: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
+    },
+  },
+  {
+    name: "read_chat",
+    description: "Read a saved chat by id, including recent messages, metadata, and optional hidden extras.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+        includeMessages: { type: "boolean" },
+        includeMetadata: { type: "boolean" },
+        includeExtra: { type: "boolean" },
+      },
+      required: ["chatId"],
+    },
+  },
+  {
+    name: "search_chat_messages",
+    description: "Search message text across all chats or within a specific chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        chatId: { type: "string" },
+        mode: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+        ignoreCase: { type: "boolean" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "inspect_chat_runtime",
+    description: "Inspect stored runtime state for a chat, including active agents, tools, lorebooks, stack defaults, and turn-tag presence.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+      },
+      required: ["chatId"],
+    },
+  },
+  {
+    name: "inspect_turn_tag_packet",
+    description: "Inspect the stored turn_tag_packet_v1 or another agent variable for a specific chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+        variableName: { type: "string" },
+      },
+      required: ["chatId"],
+    },
+  },
+  {
+    name: "inspect_agent_activity",
+    description: "Inspect active agent config ids, resolved agent configs, phases, and relevant agent variables for a specific chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+      },
+      required: ["chatId"],
+    },
+  },
+  {
+    name: "inspect_lorebook_scope",
+    description: "Inspect active lorebooks and linked/global lorebook candidates for a specific chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        chatId: { type: "string" },
+      },
+      required: ["chatId"],
+    },
+  },
 ];
 
 function getPathEnvKey(env: NodeJS.ProcessEnv) {
@@ -328,7 +445,7 @@ Required schema:
 {
   "say": "visible text for the user, or empty string for silent work",
   "commands": [
-    { "name": "read|grep|find|ls|edit|write|bash", "arguments": {} }
+    { "name": "<workspace tool name>", "arguments": {} }
   ],
   "stop": false
 }
@@ -397,6 +514,33 @@ function normalizeMariMaxTokens(value: unknown): number | undefined {
 
 function parseExtra(value: unknown): Record<string, unknown> {
   return parseJsonObject(value) ?? {};
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseChatMetadata(value: unknown): Record<string, unknown> {
+  return parseJsonObject(value) ?? {};
+}
+
+function chatNameMatches(chat: { name?: string | null }, query: string): boolean {
+  return typeof chat.name === "string" && chat.name.toLowerCase().includes(query);
+}
+
+function normalizeChatMode(value: unknown): ChatMode | null {
+  return value === "conversation" || value === "roleplay" || value === "visual_novel" || value === "game"
+    ? value
+    : null;
 }
 
 type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
@@ -991,7 +1135,19 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 function isReadOnlyWorkspaceCommand(command: WorkspaceCommandCall): boolean {
-  return command.name === "read" || command.name === "grep" || command.name === "find" || command.name === "ls";
+  return (
+    command.name === "read" ||
+    command.name === "grep" ||
+    command.name === "find" ||
+    command.name === "ls" ||
+    command.name === "list_chats" ||
+    command.name === "read_chat" ||
+    command.name === "search_chat_messages" ||
+    command.name === "inspect_chat_runtime" ||
+    command.name === "inspect_turn_tag_packet" ||
+    command.name === "inspect_agent_activity" ||
+    command.name === "inspect_lorebook_scope"
+  );
 }
 
 function visibleTextRequestsUserApproval(text: string): boolean {
@@ -1047,6 +1203,18 @@ function workspaceCommandValidationIssue(command: WorkspaceCommandCall): string 
       return requireString("command");
     case "ls":
       return null;
+    case "list_chats":
+      return null;
+    case "read_chat":
+      return requireString("chatId");
+    case "search_chat_messages":
+      return requireString("query");
+    case "inspect_chat_runtime":
+    case "inspect_agent_activity":
+    case "inspect_lorebook_scope":
+      return requireString("chatId");
+    case "inspect_turn_tag_packet":
+      return requireString("chatId");
     default:
       return `Unsupported workspace command: ${(command as WorkspaceCommandCall).name}`;
   }
@@ -1570,6 +1738,20 @@ ${sections.join("\n\n")}
         return this.commandFind(command.arguments);
       case "grep":
         return this.commandGrep(command.arguments);
+      case "list_chats":
+        return this.commandListChats(command.arguments);
+      case "read_chat":
+        return this.commandReadChat(command.arguments);
+      case "search_chat_messages":
+        return this.commandSearchChatMessages(command.arguments);
+      case "inspect_chat_runtime":
+        return this.commandInspectChatRuntime(command.arguments);
+      case "inspect_turn_tag_packet":
+        return this.commandInspectTurnTagPacket(command.arguments);
+      case "inspect_agent_activity":
+        return this.commandInspectAgentActivity(command.arguments);
+      case "inspect_lorebook_scope":
+        return this.commandInspectLorebookScope(command.arguments);
       case "write":
         return this.commandWrite(command.arguments);
       case "edit":
@@ -1745,6 +1927,310 @@ ${sections.join("\n\n")}
       }
     }
     return output.length ? output.join("\n") : `No matches for ${pattern}.`;
+  }
+
+  private async commandListChats(args: Record<string, unknown>): Promise<string> {
+    const chatStorage = createChatsStorage(this.app.db);
+    const rawQuery = stringArg(args, "query", "").trim().toLowerCase();
+    const requestedMode = normalizeChatMode(args.mode);
+    const limit = numberArg(args, "limit", 30, 1, 200);
+    const chats = await chatStorage.list();
+    const filtered = chats
+      .filter((chat) => !requestedMode || chat.mode === requestedMode)
+      .filter((chat) => !rawQuery || chatNameMatches(chat, rawQuery) || chat.id.toLowerCase().includes(rawQuery))
+      .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))
+      .slice(0, limit)
+      .map((chat) => ({
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+        characterIds: parseStringArray(chat.characterIds),
+        personaId: chat.personaId ?? null,
+        updatedAt: chat.updatedAt ?? null,
+        createdAt: chat.createdAt ?? null,
+      }));
+    return stringifyOutput({
+      query: rawQuery || null,
+      mode: requestedMode,
+      count: filtered.length,
+      chats: filtered,
+    });
+  }
+
+  private async loadChatSnapshot(chatId: string) {
+    const chatStorage = createChatsStorage(this.app.db);
+    const chat = await chatStorage.getById(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    const messages = await chatStorage.listMessages(chatId);
+    const metadata = parseChatMetadata(chat.metadata);
+    return { chat, messages, metadata };
+  }
+
+  private async resolveConfiguredActiveAgents(input: {
+    activeAgentIds: string[];
+    mode: ChatMode | null;
+  }) {
+    const agentStorage = createAgentsStorage(this.app.db);
+    const configs = await agentStorage.listEnabled();
+    const activeSet = new Set(input.activeAgentIds);
+    const resolved = configs
+      .filter((config) => matchesActiveAgentSelection(activeSet, { id: config.id, type: config.type }))
+      .map((config) => {
+        const settings = parseAgentSettingsRecord(config.settings);
+        return {
+          id: config.id,
+          type: config.type,
+          name: config.name,
+          description: config.description,
+          phase: config.phase,
+          enabled: config.enabled,
+          connectionId: config.connectionId ?? null,
+          order: resolveActiveAgentSelectionOrder(input.activeAgentIds, { id: config.id, type: config.type }),
+          settingsSummary: {
+            lorebookIds: parseStringArray(settings.lorebookIds),
+            useChatActiveLorebooks: settings.useChatActiveLorebooks === true,
+            resultType: typeof settings.resultType === "string" ? settings.resultType : null,
+            includePreGenerationInjections: settings.includePreGenerationInjections === true,
+            enabledToolIds: parseStringArray(settings.enabledToolIds),
+            enableToolUse: settings.enableToolUse === true,
+          },
+        };
+      })
+      .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER));
+
+    const stackDefaults =
+      input.mode
+        ? resolveEffectiveModeAgentDefaults({
+            mode: input.mode,
+            assignmentConfig: getDefaultAgentStackAssignmentConfig(),
+            includeDiagnostics: true,
+          })
+        : null;
+
+    return { resolved, stackDefaults };
+  }
+
+  private async commandReadChat(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const includeMessages = booleanArg(args, "includeMessages", true);
+    const includeMetadata = booleanArg(args, "includeMetadata", true);
+    const includeExtra = booleanArg(args, "includeExtra", false);
+    const limit = numberArg(args, "limit", 40, 1, 200);
+    const { chat, messages, metadata } = await this.loadChatSnapshot(chatId);
+    const result: Record<string, unknown> = {
+      chat: {
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+        characterIds: parseStringArray(chat.characterIds),
+        personaId: chat.personaId ?? null,
+        createdAt: chat.createdAt ?? null,
+        updatedAt: chat.updatedAt ?? null,
+      },
+    };
+
+    if (includeMetadata) result.metadata = metadata;
+    if (includeMessages) {
+      result.messages = messages.slice(-limit).map((message) => {
+        const entry: Record<string, unknown> = {
+          id: message.id,
+          role: message.role,
+          characterId: message.characterId ?? null,
+          createdAt: message.createdAt ?? null,
+          content: typeof message.content === "string" ? message.content : String(message.content ?? ""),
+        };
+        if (includeExtra) entry.extra = parseExtra(message.extra);
+        return entry;
+      });
+    }
+
+    result.messageCount = messages.length;
+    return stringifyOutput(result);
+  }
+
+  private async commandSearchChatMessages(args: Record<string, unknown>): Promise<string> {
+    const chatStorage = createChatsStorage(this.app.db);
+    const query = stringArg(args, "query").trim();
+    const requestedChatId = stringArg(args, "chatId", "").trim();
+    const requestedMode = normalizeChatMode(args.mode);
+    const limit = numberArg(args, "limit", 40, 1, 200);
+    const ignoreCase = booleanArg(args, "ignoreCase", true);
+    const chats = requestedChatId
+      ? [await chatStorage.getById(requestedChatId)].filter((chat): chat is NonNullable<typeof chat> => !!chat)
+      : await chatStorage.list();
+    const needle = ignoreCase ? query.toLowerCase() : query;
+    const matches: Array<Record<string, unknown>> = [];
+
+    for (const chat of chats) {
+      if (matches.length >= limit) break;
+      if (requestedMode && chat.mode !== requestedMode) continue;
+      const messages = await chatStorage.listMessages(chat.id);
+      for (const message of messages) {
+        const content = typeof message.content === "string" ? message.content : String(message.content ?? "");
+        const haystack = ignoreCase ? content.toLowerCase() : content;
+        const index = haystack.indexOf(needle);
+        if (index < 0) continue;
+        const start = Math.max(0, index - 120);
+        const end = Math.min(content.length, index + query.length + 120);
+        matches.push({
+          chatId: chat.id,
+          chatName: chat.name ?? null,
+          mode: chat.mode ?? null,
+          messageId: message.id,
+          role: message.role,
+          createdAt: message.createdAt ?? null,
+          excerpt: content.slice(start, end).trim(),
+        });
+        if (matches.length >= limit) break;
+      }
+    }
+
+    return stringifyOutput({
+      query,
+      chatId: requestedChatId || null,
+      mode: requestedMode,
+      count: matches.length,
+      matches,
+    });
+  }
+
+  private async commandInspectChatRuntime(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const { chat, metadata } = await this.loadChatSnapshot(chatId);
+    const mode = normalizeChatMode(chat.mode);
+    const activeAgentIds = parseStringArray(metadata.activeAgentIds);
+    const activeLorebookIds = parseStringArray(metadata.activeLorebookIds);
+    const activeToolIds = parseStringArray(metadata.activeToolIds);
+    const { resolved, stackDefaults } = await this.resolveConfiguredActiveAgents({ activeAgentIds, mode });
+    const agentVariables = normalizeAgentVariables(metadata.agentVariables);
+
+    return stringifyOutput({
+      chat: {
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+        characterIds: parseStringArray(chat.characterIds),
+        personaId: chat.personaId ?? null,
+      },
+      toggles: {
+        enableAgents: metadata.enableAgents === true,
+        enableTools: metadata.enableTools === true,
+      },
+      active: {
+        agentIds: activeAgentIds,
+        toolIds: activeToolIds,
+        lorebookIds: activeLorebookIds,
+      },
+      stackDefaults,
+      turnTagPacket: parseTurnTagPacketFromChatMeta(metadata),
+      agentVariables: {
+        keys: Object.keys(agentVariables).sort(),
+        count: Object.keys(agentVariables).length,
+      },
+      resolvedAgents: resolved,
+    });
+  }
+
+  private async commandInspectTurnTagPacket(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const variableName = stringArg(args, "variableName", "turn_tag_packet_v1").trim() || "turn_tag_packet_v1";
+    const { chat, metadata } = await this.loadChatSnapshot(chatId);
+    const variables = normalizeAgentVariables(metadata.agentVariables);
+    const raw = typeof variables[variableName] === "string" ? variables[variableName] : null;
+
+    return stringifyOutput({
+      chat: {
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+      },
+      variableName,
+      found: raw !== null,
+      raw,
+      parsed: parseTurnTagPacket(raw),
+      defaultTurnTagPacket: variableName === "turn_tag_packet_v1" ? parseTurnTagPacketFromChatMeta(metadata) : null,
+    });
+  }
+
+  private async commandInspectAgentActivity(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const { chat, metadata } = await this.loadChatSnapshot(chatId);
+    const mode = normalizeChatMode(chat.mode);
+    const activeAgentIds = parseStringArray(metadata.activeAgentIds);
+    const { resolved, stackDefaults } = await this.resolveConfiguredActiveAgents({ activeAgentIds, mode });
+    const agentVariables = normalizeAgentVariables(metadata.agentVariables);
+    const interestingVariables = Object.fromEntries(
+      Object.entries(agentVariables).filter(([key]) =>
+        key === "turn_tag_packet_v1" ||
+        key.endsWith("_v1") ||
+        key.includes("casting") ||
+        key.includes("pressure") ||
+        key.includes("world_context"),
+      ),
+    );
+
+    return stringifyOutput({
+      chat: {
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+      },
+      activeAgentIds,
+      resolvedAgents: resolved,
+      stackDefaults,
+      interestingVariables,
+    });
+  }
+
+  private async commandInspectLorebookScope(args: Record<string, unknown>): Promise<string> {
+    const chatId = stringArg(args, "chatId");
+    const { chat, metadata } = await this.loadChatSnapshot(chatId);
+    const lorebooksStorage = createLorebooksStorage(this.app.db);
+    const allLorebooks = (await lorebooksStorage.list()) as Array<Record<string, unknown>>;
+    const activeLorebookIds = parseStringArray(metadata.activeLorebookIds);
+    const characterIds = parseStringArray(chat.characterIds);
+    const personaId = typeof chat.personaId === "string" && chat.personaId.trim() ? chat.personaId : null;
+
+    const summarize = (book: Record<string, unknown>) => ({
+      id: typeof book.id === "string" ? book.id : null,
+      name: typeof book.name === "string" ? book.name : null,
+      enabled: book.enabled === true,
+      isGlobal: book.isGlobal === true,
+      chatId: typeof book.chatId === "string" ? book.chatId : null,
+      characterIds: parseStringArray(book.characterIds),
+      personaIds: parseStringArray(book.personaIds),
+      tags: parseStringArray(book.tags),
+      scope: book.scope ?? null,
+    });
+
+    const activeLorebooks = allLorebooks
+      .filter((book) => typeof book.id === "string" && activeLorebookIds.includes(book.id))
+      .map(summarize);
+    const linkedOrGlobal = allLorebooks
+      .filter((book) => {
+        const bookCharacterIds = parseStringArray(book.characterIds);
+        const bookPersonaIds = parseStringArray(book.personaIds);
+        return (
+          book.isGlobal === true ||
+          book.chatId === chat.id ||
+          bookCharacterIds.some((id) => characterIds.includes(id)) ||
+          (!!personaId && bookPersonaIds.includes(personaId))
+        );
+      })
+      .map(summarize);
+
+    return stringifyOutput({
+      chat: {
+        id: chat.id,
+        name: chat.name ?? null,
+        mode: chat.mode ?? null,
+        characterIds,
+        personaId,
+      },
+      activeLorebookIds,
+      activeLorebooks,
+      linkedOrGlobalCandidates: linkedOrGlobal,
+    });
   }
 
   private async commandWrite(args: Record<string, unknown>): Promise<string> {

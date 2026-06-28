@@ -38,6 +38,49 @@ type SkillUpdate = {
 const MAX_SKILL_CONTENT_LENGTH = 200_000;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 const SAFE_SKILL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const DEFAULT_WORKSPACE_SKILLS: ReadonlyArray<{ id: string; name: string; description: string; content: string }> = [
+  {
+    id: "runtime-forensics",
+    name: "runtime-forensics",
+    description: "Use Mari's runtime inspection tools to diagnose stacks, turn tags, lorebook scope, and agent behavior.",
+    content: `# Runtime Forensics
+
+Use this skill when the user asks why an RP/chat behaved a certain way, why an agent did or did not fire, what stack is active, or what lorebook/runtime state a chat currently has.
+
+Preferred tool order:
+1. \`inspect_chat_runtime\` for a high-level snapshot of a specific chat.
+2. \`inspect_turn_tag_packet\` to read the stored \`turn_tag_packet_v1\` or another agent variable.
+3. \`inspect_agent_activity\` to see active agent configs, phases, and stack/default assignment hints.
+4. \`inspect_lorebook_scope\` to inspect active lorebooks plus linked/global lorebook candidates for that chat.
+5. \`read_chat\` if you need to inspect the recent conversation that produced the runtime state.
+
+Rules:
+- Prefer tool evidence over guesswork.
+- Distinguish stored chat metadata from per-turn runtime inference.
+- When debugging roleplay stacks, name exact agent ids/types and exact lorebook ids/names when that helps.
+- If the issue spans multiple chats or forks, use \`list_chats\` and \`search_chat_messages\` first to identify the correct chat ids before reading deeper.`,
+  },
+  {
+    id: "chat-sniffer",
+    name: "chat-sniffer",
+    description: "Use Mari's read-only chat forensics tools to sniff through chats, compare forks, and locate continuity.",
+    content: `# Chat Sniffer
+
+Use this skill when the user wants you to rummage through saved chats, compare forks, find where a scene started drifting, or locate a past moment, character beat, joke, or runtime failure.
+
+Preferred tool order:
+1. \`list_chats\` to find likely chats by mode or name.
+2. \`search_chat_messages\` to search across chats or within one chat.
+3. \`read_chat\` to inspect the latest messages, metadata, and hidden extras when needed.
+4. \`inspect_chat_runtime\` if the user cares about agents, tools, lorebooks, or stack behavior in that chat.
+
+Rules:
+- Stay read-only unless the user explicitly asks for a separate mutation task.
+- If several chats match, compare ids, names, mode, and timestamps before concluding.
+- Quote or summarize only the relevant turns instead of dumping entire transcripts unless the user explicitly asks for the full thing.
+- For lore/continuity questions, combine \`search_chat_messages\` with \`inspect_lorebook_scope\` when you need both story evidence and runtime context.`,
+  },
+] as const;
 
 function rootDir() {
   return join(DATA_DIR, ".mari-workspace", "skills");
@@ -268,6 +311,7 @@ export class ProfessorMariWorkspaceSkillsService {
 
   private async ensureStorage() {
     await mkdir(rootDir(), { recursive: true });
+    await this.ensureDefaultSkills();
   }
 
   private async readRecords(): Promise<SkillRecord[]> {
@@ -326,6 +370,37 @@ export class ProfessorMariWorkspaceSkillsService {
     if (content.length > MAX_SKILL_CONTENT_LENGTH) {
       throw new Error(`Skill content must be ${MAX_SKILL_CONTENT_LENGTH} characters or fewer.`);
     }
+  }
+
+  private async ensureDefaultSkills() {
+    const records = await this.readRecords();
+    const existingIds = new Set(records.map((record) => record.id));
+    const timestamp = now();
+    const nextRecords = [...records];
+    let changed = false;
+
+    for (const skill of DEFAULT_WORKSPACE_SKILLS) {
+      if (existingIds.has(skill.id)) continue;
+      const content = buildSkillContent({
+        name: skill.name,
+        description: skill.description,
+        content: skill.content,
+      });
+      await mkdir(skillDir(skill.id), { recursive: true });
+      await writeFile(skillFilePath(skill.id), content, "utf8");
+      nextRecords.push({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        enabled: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      existingIds.add(skill.id);
+      changed = true;
+    }
+
+    if (changed) await this.writeRecords(nextRecords);
   }
 }
 

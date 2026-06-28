@@ -2,7 +2,21 @@
 // Professor Mari Workspace Agent Contracts
 // ──────────────────────────────────────────────
 
-export type MariWorkspaceToolName = "read" | "grep" | "find" | "ls" | "edit" | "write" | "bash";
+export type MariWorkspaceToolName =
+  | "read"
+  | "grep"
+  | "find"
+  | "ls"
+  | "edit"
+  | "write"
+  | "bash"
+  | "list_chats"
+  | "read_chat"
+  | "search_chat_messages"
+  | "inspect_chat_runtime"
+  | "inspect_turn_tag_packet"
+  | "inspect_agent_activity"
+  | "inspect_lorebook_scope";
 
 export interface MariWorkspaceToolTrace {
   id: string;

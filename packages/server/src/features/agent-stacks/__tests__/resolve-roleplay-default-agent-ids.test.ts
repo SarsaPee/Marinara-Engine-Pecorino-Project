@@ -12,6 +12,7 @@ import {
   getChatModeCapabilities,
   getChatModeDefaultAgentIds,
 } from "@marinara-engine/shared";
+import { mapDefaultAgentTypesToAgentConfigIds } from "../adapters/resolve-agent-config-ids-for-defaults.js";
 import { resolveEffectiveModeAgentDefaults } from "../adapters/resolve-effective-mode-agent-defaults.js";
 import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-resolution.js";
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
@@ -379,4 +380,72 @@ test("effective defaults adapter returns mutable copies of agent ids", () => {
   assert.notEqual(result.agentIds, helperDefaults);
   result.agentIds.push("fake-agent");
   assert.deepEqual(getChatModeDefaultAgentIds("conversation"), [...CONVERSATION_AGENT_IDS]);
+});
+
+test("default-agent type mapper preserves requested type order", () => {
+  const result = mapDefaultAgentTypesToAgentConfigIds(
+    ["knowledge-router", "custom-world-context-agent-v11", "lorebook-keeper"],
+    [
+      { type: "lorebook-keeper", id: "cfg-3", phase: "post_processing" },
+      { type: "knowledge-router", id: "cfg-1", phase: "pre_generation" },
+      { type: "custom-world-context-agent-v11", id: "cfg-2", phase: "pre_generation" },
+    ],
+  );
+
+  assert.deepEqual(result.agentConfigIds, ["cfg-1", "cfg-2", "cfg-3"]);
+  assert.deepEqual(
+    result.matched.map((entry) => entry.type),
+    ["knowledge-router", "custom-world-context-agent-v11", "lorebook-keeper"],
+  );
+});
+
+test("default-agent type mapper skips and reports missing types", () => {
+  const result = mapDefaultAgentTypesToAgentConfigIds(
+    ["knowledge-router", "missing-type", "lorebook-keeper"],
+    [
+      { type: "knowledge-router", id: "cfg-1", phase: "pre_generation" },
+      { type: "lorebook-keeper", id: "cfg-2", phase: "post_processing" },
+    ],
+  );
+
+  assert.deepEqual(result.agentConfigIds, ["cfg-1", "cfg-2"]);
+  assert.deepEqual(result.missingTypes, ["missing-type"]);
+});
+
+test("default-agent type mapper returns config ids, not types", () => {
+  const result = mapDefaultAgentTypesToAgentConfigIds(["knowledge-router"], [
+    { type: "knowledge-router", id: "cfg-knowledge-router", phase: "pre_generation" },
+  ]);
+
+  assert.deepEqual(result.agentConfigIds, ["cfg-knowledge-router"]);
+  assert.notDeepEqual(result.agentConfigIds, ["knowledge-router"]);
+});
+
+test("default-agent type mapper does not duplicate output for duplicate requested types", () => {
+  const result = mapDefaultAgentTypesToAgentConfigIds(
+    ["knowledge-router", "knowledge-router", "lorebook-keeper"],
+    [
+      { type: "knowledge-router", id: "cfg-1", phase: "pre_generation" },
+      { type: "lorebook-keeper", id: "cfg-2", phase: "post_processing" },
+    ],
+  );
+
+  assert.deepEqual(result.agentConfigIds, ["cfg-1", "cfg-2"]);
+  assert.deepEqual(result.missingTypes, []);
+});
+
+test("default-agent type mapper does not mutate inputs", () => {
+  const defaultAgentTypes = ["knowledge-router", "lorebook-keeper"];
+  const rows = [
+    { type: "knowledge-router", id: "cfg-1", phase: "pre_generation" },
+    { type: "lorebook-keeper", id: "cfg-2", phase: "post_processing" },
+  ];
+
+  const defaultAgentTypesSnapshot = [...defaultAgentTypes];
+  const rowsSnapshot = rows.map((row) => ({ ...row }));
+
+  mapDefaultAgentTypesToAgentConfigIds(defaultAgentTypes, rows);
+
+  assert.deepEqual(defaultAgentTypes, defaultAgentTypesSnapshot);
+  assert.deepEqual(rows, rowsSnapshot);
 });

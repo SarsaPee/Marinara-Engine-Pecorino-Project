@@ -6,24 +6,24 @@ This section covers the downstream Pecorino fork and the local workflow around i
 
 The git-tracked source of truth is:
 
-- `/Users/davidmigdale/Marinara-Engine-Pecorino-Project`
+- `~/Marinara-Engine-Pecorino-Project`
 
 The historical loose install was parked as a backup:
 
-- `/Users/davidmigdale/Marinara-Engine-loose-backup-2026-06-28`
+- `~/Marinara-Engine-loose-backup-2026-06-28`
 
 The old live path now points to the repo checkout through a symlink:
 
-- `/Users/davidmigdale/Marinara-Engine` -> `/Users/davidmigdale/Marinara-Engine-Pecorino-Project`
+- `~/Marinara-Engine` -> `~/Marinara-Engine-Pecorino-Project`
 
-That means old scripts, habits, and references that still use `/Users/davidmigdale/Marinara-Engine` now land on the git repo instead of the loose copy.
+That means old scripts, habits, and references that still use `~/Marinara-Engine` now land on the git repo instead of the loose copy.
 
 ## Day-To-Day Workflow
 
 Make changes in the Pecorino repo checkout, then use normal git flow:
 
 ```bash
-cd /Users/davidmigdale/Marinara-Engine-Pecorino-Project
+cd ~/Marinara-Engine-Pecorino-Project
 git status
 git add ...
 git commit -m "..."
@@ -35,12 +35,16 @@ git push
 - `origin`: `git@github.com:SarsaPee/Marinara-Engine-Pecorino-Project.git`
 - `upstream`: `https://github.com/Pasta-Devs/Marinara-Engine.git`
 
+## Branching
+
+See [Branching Policy](BRANCHING.md) for the recommended downstream-development, upstream-sync, and upstream-PR workflow.
+
 ## Updating From Upstream
 
 Fetch upstream, then merge or rebase intentionally:
 
 ```bash
-cd /Users/davidmigdale/Marinara-Engine-Pecorino-Project
+cd ~/Marinara-Engine-Pecorino-Project
 git fetch upstream --tags
 git merge upstream/main
 ```

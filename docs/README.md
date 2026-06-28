@@ -53,3 +53,4 @@ These files remain at the repo root because external tooling and common GitHub c
 ## Pecorino Project
 
 - [Pecorino Overview And Local Workflow](pecorino/README.md)
+- [Pecorino Branching Policy](pecorino/BRANCHING.md)

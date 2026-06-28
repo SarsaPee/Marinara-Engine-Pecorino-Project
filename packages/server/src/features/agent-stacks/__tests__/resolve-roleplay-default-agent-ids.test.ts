@@ -7,6 +7,7 @@ import {
   PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS,
   PECORINO_ROLEPLAY_STACK_ID,
   ROLEPLAY_DEFAULT_AGENT_IDS,
+  CHAT_MODES,
   VISUAL_NOVEL_DEFAULT_AGENT_IDS,
   getChatModeCapabilities,
   getChatModeDefaultAgentIds,
@@ -253,4 +254,29 @@ test("shared chat-mode helper returns copies, not the original arrays", () => {
   assert.notEqual(roleplayIds, original);
   roleplayIds.push("fake-agent");
   assert.deepEqual([...original], [...ROLEPLAY_DEFAULT_AGENT_IDS]);
+});
+
+test("CHAT_MODES conversation defaultAgents matches shared helper", () => {
+  assert.deepEqual(CHAT_MODES.conversation.defaultAgents, getChatModeDefaultAgentIds("conversation"));
+});
+
+test("CHAT_MODES roleplay defaultAgents matches shared helper", () => {
+  assert.deepEqual(CHAT_MODES.roleplay.defaultAgents, getChatModeDefaultAgentIds("roleplay"));
+});
+
+test("CHAT_MODES visual_novel defaultAgents matches shared helper", () => {
+  assert.deepEqual(CHAT_MODES.visual_novel.defaultAgents, getChatModeDefaultAgentIds("visual_novel"));
+});
+
+test("CHAT_MODES game defaultAgents matches shared helper", () => {
+  assert.deepEqual(CHAT_MODES.game.defaultAgents, getChatModeDefaultAgentIds("game"));
+});
+
+test("CHAT_MODES defaultAgents arrays are copies, not shared references", () => {
+  const conversationDefaults = CHAT_MODES.conversation.defaultAgents;
+  const conversationHelperDefaults = getChatModeDefaultAgentIds("conversation");
+
+  assert.notEqual(conversationDefaults, conversationHelperDefaults);
+  conversationDefaults.push("fake-agent");
+  assert.deepEqual(getChatModeDefaultAgentIds("conversation"), [...CONVERSATION_AGENT_IDS]);
 });

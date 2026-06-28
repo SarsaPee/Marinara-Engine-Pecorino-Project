@@ -7,6 +7,7 @@ import {
 } from "@marinara-engine/shared";
 import type { AgentInjection } from "../agents/agent-pipeline.js";
 import { resolveAgentResultType } from "../agents/agent-executor.js";
+import { matchesActiveAgentSelection } from "./active-agent-selection.js";
 
 export type RuntimeAgentSectionType = string;
 
@@ -94,7 +95,7 @@ export function buildRuntimeAgentSectionEligibleTypes(input: {
   enableAgents: boolean;
   activeAgentIds: string[];
   chatMode?: ChatMode;
-  configuredAgents?: Array<{ type: string; phase: string; settings?: unknown }>;
+  configuredAgents?: Array<{ id?: string; type: string; phase: string; settings?: unknown }>;
 }): Set<RuntimeAgentSectionType> {
   const eligible = new Set<RuntimeAgentSectionType>();
   if (!input.enableAgents || input.activeAgentIds.length === 0) return eligible;
@@ -102,7 +103,7 @@ export function buildRuntimeAgentSectionEligibleTypes(input: {
   const activeAgentIds = new Set(input.activeAgentIds);
 
   for (const agent of BUILT_IN_AGENTS) {
-    if (!activeAgentIds.has(agent.id)) continue;
+    if (!matchesActiveAgentSelection(activeAgentIds, { id: `builtin:${agent.id}`, type: agent.id })) continue;
     if (input.chatMode && !isAgentAvailableInChatMode(input.chatMode, agent.id)) continue;
     if (agent.phase !== "pre_generation" || agent.id === "html") continue;
     if (
@@ -115,7 +116,7 @@ export function buildRuntimeAgentSectionEligibleTypes(input: {
   }
 
   for (const agent of input.configuredAgents ?? []) {
-    if (!activeAgentIds.has(agent.type)) continue;
+    if (!matchesActiveAgentSelection(activeAgentIds, { id: agent.id, type: agent.type })) continue;
     if (input.chatMode && !isAgentAvailableInChatMode(input.chatMode, agent.type)) continue;
     if (agent.phase !== "pre_generation" || agent.type === "html") continue;
     const settings = parseRuntimeAgentSettings(agent.settings);

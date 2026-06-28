@@ -31,6 +31,7 @@ import {
   normalizeProseGuardianPromptTemplate,
 } from "./prose-guardian-settings.js";
 import { applyKnowledgeAgentChatSettings } from "./knowledge-agent-settings.js";
+import { matchesActiveAgentSelection } from "./active-agent-selection.js";
 
 type ConnectionsStore = {
   getWithKey(id: string): Promise<any | null>;
@@ -270,7 +271,9 @@ export async function resolveAgentPipelineAgents({
   };
   const defaultAgentConn = await connections.getDefaultForAgents();
   for (const cfg of enabledConfigs) {
-    if (hasPerChatAgentList && !perChatAgentSet.has(cfg.type)) continue;
+    if (hasPerChatAgentList && !matchesActiveAgentSelection(perChatAgentSet, { id: cfg.id as string, type: cfg.type })) {
+      continue;
+    }
 
     let settings = resolveAgentSettings(cfg.type as string, cfg.settings);
     if (cfg.type === "spotify") {
@@ -364,7 +367,7 @@ export async function resolveAgentPipelineAgents({
           if (resolvedTypes.has(agent.id)) return false;
           if (deletedBuiltInTypes.has(agent.id)) return false;
           if (isBuiltInAgentRuntimeDisabled(agent.id)) return false;
-          return perChatAgentSet.has(agent.id);
+          return matchesActiveAgentSelection(perChatAgentSet, { id: `builtin:${agent.id}`, type: agent.id });
         })
       : [];
 

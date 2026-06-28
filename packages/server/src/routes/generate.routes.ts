@@ -1943,6 +1943,7 @@ export async function generateRoutes(app: FastifyInstance) {
           activeAgentIds: chatActiveAgentIds,
           chatMode,
           configuredAgents: configuredPromptAgents.map((agent) => ({
+            id: agent.id,
             type: agent.type,
             phase: agent.phase,
             settings: agent.settings,

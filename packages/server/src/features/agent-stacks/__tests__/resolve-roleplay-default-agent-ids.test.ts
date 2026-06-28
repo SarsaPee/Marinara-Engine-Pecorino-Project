@@ -18,6 +18,7 @@ import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
 import { resolveRoleplayDefaultAgentIds } from "../bridges/resolve-roleplay-default-agent-ids.js";
+import { finalizeRoleplayChatCreationActiveAgentIds } from "../../../services/storage/chats.storage.js";
 
 test("roleplay bridge falls back to legacy defaults with no stack assignment", () => {
   const result = resolveRoleplayDefaultAgentIds({
@@ -448,4 +449,81 @@ test("default-agent type mapper does not mutate inputs", () => {
 
   assert.deepEqual(defaultAgentTypes, defaultAgentTypesSnapshot);
   assert.deepEqual(rows, rowsSnapshot);
+});
+
+test("roleplay chat creation finalizer uses translated ids for mode_default when translation is complete", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "mode_default",
+    defaultAgentTypes: ["knowledge-router", "lorebook-keeper"],
+    translatedAgentConfigIds: ["cfg-1", "cfg-2"],
+    missingTypes: [],
+  });
+
+  assert.deepEqual(result, ["cfg-1", "cfg-2"]);
+});
+
+test("roleplay chat creation finalizer uses translated ids for chat_override when translation is complete", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "chat_override",
+    defaultAgentTypes: ["knowledge-router", "lorebook-keeper"],
+    translatedAgentConfigIds: ["cfg-1", "cfg-2"],
+    missingTypes: [],
+  });
+
+  assert.deepEqual(result, ["cfg-1", "cfg-2"]);
+});
+
+test("roleplay chat creation finalizer falls back for legacy_fallback even when translation is complete", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "legacy_fallback",
+    defaultAgentTypes: ["knowledge-router", "lorebook-keeper"],
+    translatedAgentConfigIds: ["cfg-1", "cfg-2"],
+    missingTypes: [],
+  });
+
+  assert.equal(result, null);
+});
+
+test("roleplay chat creation finalizer falls back for shared_legacy even when translation is complete", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "shared_legacy",
+    defaultAgentTypes: ["knowledge-router", "lorebook-keeper"],
+    translatedAgentConfigIds: ["cfg-1", "cfg-2"],
+    missingTypes: [],
+  });
+
+  assert.equal(result, null);
+});
+
+test("roleplay chat creation finalizer falls back when default agent types are empty", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "mode_default",
+    defaultAgentTypes: [],
+    translatedAgentConfigIds: ["cfg-1"],
+    missingTypes: [],
+  });
+
+  assert.equal(result, null);
+});
+
+test("roleplay chat creation finalizer falls back when translated ids are empty", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "mode_default",
+    defaultAgentTypes: ["knowledge-router"],
+    translatedAgentConfigIds: [],
+    missingTypes: [],
+  });
+
+  assert.equal(result, null);
+});
+
+test("roleplay chat creation finalizer falls back when missing types remain", () => {
+  const result = finalizeRoleplayChatCreationActiveAgentIds({
+    source: "mode_default",
+    defaultAgentTypes: ["knowledge-router", "missing-type"],
+    translatedAgentConfigIds: ["cfg-1"],
+    missingTypes: ["missing-type"],
+  });
+
+  assert.equal(result, null);
 });

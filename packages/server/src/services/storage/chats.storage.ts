@@ -30,6 +30,11 @@ import {
 } from "../import/import-timestamps.js";
 import { scheduleNeedsRefresh, type CharacterSchedules, type WeekSchedule } from "../conversation/schedule.service.js";
 import { logger } from "../../lib/logger.js";
+import {
+  resolveEffectiveModeAgentDefaults,
+  type EffectiveModeAgentDefaultsSource,
+} from "../../features/agent-stacks/adapters/resolve-effective-mode-agent-defaults.js";
+import { resolveAgentConfigIdsForDefaultAgentTypes } from "../../features/agent-stacks/adapters/resolve-agent-config-ids-for-defaults.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 
@@ -196,6 +201,41 @@ async function resolveLegacyRoleplayChatCreationActiveAgentIds(db: DB): Promise<
   }
 }
 
+export function finalizeRoleplayChatCreationActiveAgentIds(input: {
+  source: EffectiveModeAgentDefaultsSource;
+  defaultAgentTypes: readonly string[];
+  translatedAgentConfigIds: readonly string[];
+  missingTypes: readonly string[];
+}): string[] | null {
+  if (input.source !== "chat_override" && input.source !== "mode_default") return null;
+  if (input.defaultAgentTypes.length === 0) return null;
+  if (input.translatedAgentConfigIds.length === 0) return null;
+  if (input.missingTypes.length > 0) return null;
+  return [...input.translatedAgentConfigIds];
+}
+
+async function resolveRoleplayChatCreationActiveAgentIds(db: DB): Promise<string[]> {
+  try {
+    // Guarded bridge: stack/effective defaults currently resolve type-level ids,
+    // but chat metadata.activeAgentIds must remain concrete agent config row ids.
+    // Until stack assignment/storage is complete, we only accept the translated
+    // stack path when the translation is complete and non-empty; otherwise we
+    // preserve the legacy roleplay fallback exactly.
+    const defaults = resolveEffectiveModeAgentDefaults({ mode: "roleplay" });
+    const translated = await resolveAgentConfigIdsForDefaultAgentTypes(db, defaults.agentIds);
+    const translatedAgentConfigIds = finalizeRoleplayChatCreationActiveAgentIds({
+      source: defaults.source,
+      defaultAgentTypes: defaults.agentIds,
+      translatedAgentConfigIds: translated.agentConfigIds,
+      missingTypes: translated.missingTypes,
+    });
+    if (translatedAgentConfigIds) return translatedAgentConfigIds;
+  } catch {
+    // Preserve safe fallback behavior if the stack/defaults path throws.
+  }
+  return resolveLegacyRoleplayChatCreationActiveAgentIds(db);
+}
+
 function parseMessageCursor(before?: string): { createdAt: string; rowid: number } | null {
   if (!before) return null;
   const separatorIndex = before.indexOf("|");
@@ -348,7 +388,7 @@ export function createChatsStorage(db: DB) {
 
       let activeAgentIds: string[] = [];
       if (input.mode === "roleplay") {
-        activeAgentIds = await resolveLegacyRoleplayChatCreationActiveAgentIds(db);
+        activeAgentIds = await resolveRoleplayChatCreationActiveAgentIds(db);
       }
 
       const metadata: MetadataPatch = {

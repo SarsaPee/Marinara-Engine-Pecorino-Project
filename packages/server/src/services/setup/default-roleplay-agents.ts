@@ -1,4 +1,5 @@
 import type { DB } from "../../db/connection.js";
+import { parseAgentSettingsRecord } from "@marinara-engine/shared";
 import { createAgentsStorage } from "../storage/agents.storage.js";
 
 type SeedAgent = {
@@ -157,9 +158,9 @@ Visible output:
     type: "runtime-inspector",
     name: "Runtime Inspector",
     description: "Debug-only agent that inspects runtime state, stack activity, lorebook scope, and turn routing when explicitly asked.",
-    phase: "pre_generation",
-    resultType: "context_injection",
-    injectAsSection: true,
+    phase: "post_processing",
+    resultType: "text_rewrite",
+    injectAsSection: false,
     contextSize: 6,
     enabledTools: [
       "inspect_chat_runtime",
@@ -169,12 +170,18 @@ Visible output:
     ],
     promptTemplate: `You are Runtime Inspector.
 
-This is a debugging agent, not a story agent.
-Never continue the roleplay scene.
-Never write in-character prose.
-Never mutate chat state.
+This is a debugging post-processor, not a story agent.
+You receive the model's generated reply inside <assistant_response>.
 
-Only act when the latest user turn is clearly asking for runtime/debug/meta inspection of:
+Your job is narrow:
+- preserve the main assistant reply exactly as written
+- append a separate markdown inspection section only when the latest user turn is clearly asking for runtime/debug/meta inspection
+- never continue the roleplay scene yourself
+- never replace the reply with a debug receipt
+- never mutate chat state, lorebooks, characters, tools, or stack assignment
+
+Explicit activation only:
+Act only when the latest user turn is clearly asking for runtime/debug/meta inspection of:
 - agent stack
 - turn tag packet
 - lorebook scope
@@ -182,24 +189,46 @@ Only act when the latest user turn is clearly asking for runtime/debug/meta insp
 - why an agent did or did not fire
 - what tools or agents are active
 
-If the user is not clearly asking for runtime/debug inspection, return exactly:
-RUNTIME INSPECTOR: no-op
+If the latest user turn is not a clear runtime/debug/meta request, return exactly:
+{"editNeeded":false,"editedText":"","changes":[]}
 
 When activated:
 1. Use the inspector tools as needed.
 2. Prefer factual inspection over guesswork.
-3. Report concise findings only.
-4. Call out uncertainty plainly.
-5. Do not recommend preset rewrites unless the evidence actually points there.
+3. Distinguish clearly between:
+   - what is configured
+   - what resolved this turn
+   - what actually ran
+   - what is only an inference
+4. Do not recommend preset rewrites unless the evidence points there.
+5. Keep the debug panel compact and readable.
 
-Output format:
-RUNTIME INSPECTOR:
-- finding: <short factual statement>
-- finding: <short factual statement>
-- likely cause: <if known>
-- next check: <optional>
+Return ONLY valid JSON in this shape:
+{"editNeeded":true,"editedText":"<full original assistant reply plus appended markdown section>","changes":[{"description":"Appended runtime inspector panel."}]}
 
-Keep it compact and technical.`,
+Append this markdown block to the END of the existing assistant reply:
+
+---
+## Runtime Inspector
+status: <healthy|partial|blocked|unknown>
+scope: <what you inspected>
+findings:
+- <short factual statement>
+- <short factual statement>
+resolved:
+- <agent/tool/lorebook/runtime fact>
+- <agent/tool/lorebook/runtime fact>
+likely_cause: <short cause or "none identified">
+next_check: <single best next check or "none">
+
+Rules:
+- preserve the original assistant reply verbatim before the appended section
+- do not delete, rewrite, or paraphrase the original reply unless it is impossible to append safely
+- do not output raw JSON from tools unless the user explicitly asked for it
+- prefer exact names and ids when they clarify the diagnosis
+- keep the appended panel concise
+- if nothing is wrong, say that plainly in the panel
+- editedText must be the full final assistant message, not just the appended section`,
   },
   {
     type: "custom-character-scrivener-v11",
@@ -240,7 +269,40 @@ export async function ensureDefaultRoleplayAgents(db: DB): Promise<void> {
 
   for (const seed of SEEDED_ROLEPLAY_AGENTS) {
     const existing = await storage.getByType(seed.type);
-    if (existing) continue;
+    if (existing) {
+      if (seed.type === "runtime-inspector") {
+        await storage.update(existing.id, {
+          name: seed.name,
+          description: seed.description,
+          phase: seed.phase,
+          promptTemplate: seed.promptTemplate,
+          resultType: seed.resultType as any,
+          settings: {
+            ...parseAgentSettingsRecord(existing.settings),
+            author: "Nemo Engine",
+            injectAsSection: seed.injectAsSection === true,
+            contextSize: seed.contextSize ?? 8,
+            activationKeywords: [
+              "inspect runtime",
+              "debug runtime",
+              "agent stack",
+              "turn tag packet",
+              "why didn't",
+              "why didnt",
+              "why did not",
+              "which agents fired",
+              "inspect lorebook scope",
+              "prompt debug",
+              "debug prompt",
+            ],
+            activationScanDepth: 3,
+            enabledTools: seed.enabledTools ?? [],
+            resultType: seed.resultType,
+          },
+        });
+      }
+      continue;
+    }
 
     await storage.create({
       type: seed.type,

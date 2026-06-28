@@ -35,6 +35,7 @@ import {
   type EffectiveModeAgentDefaultsSource,
 } from "../../features/agent-stacks/adapters/resolve-effective-mode-agent-defaults.js";
 import { resolveAgentConfigIdsForDefaultAgentTypes } from "../../features/agent-stacks/adapters/resolve-agent-config-ids-for-defaults.js";
+import { getDefaultAgentStackAssignmentConfig } from "../../features/agent-stacks/config/default-agent-stack-assignment-config.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 
@@ -221,7 +222,10 @@ async function resolveRoleplayChatCreationActiveAgentIds(db: DB): Promise<string
     // Until stack assignment/storage is complete, we only accept the translated
     // stack path when the translation is complete and non-empty; otherwise we
     // preserve the legacy roleplay fallback exactly.
-    const defaults = resolveEffectiveModeAgentDefaults({ mode: "roleplay" });
+    const defaults = resolveEffectiveModeAgentDefaults({
+      mode: "roleplay",
+      assignmentConfig: getDefaultAgentStackAssignmentConfig(),
+    });
     const translated = await resolveAgentConfigIdsForDefaultAgentTypes(db, defaults.agentIds);
     const translatedAgentConfigIds = finalizeRoleplayChatCreationActiveAgentIds({
       source: defaults.source,

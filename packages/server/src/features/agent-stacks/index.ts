@@ -1,5 +1,6 @@
 export * from "./adapters/resolve-effective-mode-agent-defaults.js";
 export * from "./adapters/resolve-agent-config-ids-for-defaults.js";
+export * from "./config/default-agent-stack-assignment-config.js";
 export * from "./facades/resolve-agent-defaults-from-assignment-config.js";
 export * from "./bridges/resolve-roleplay-default-agent-ids.js";
 export * from "./diagnostics/inspect-agent-stack-resolution.js";

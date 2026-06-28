@@ -14,6 +14,7 @@ import {
 } from "@marinara-engine/shared";
 import { mapDefaultAgentTypesToAgentConfigIds } from "../adapters/resolve-agent-config-ids-for-defaults.js";
 import { resolveEffectiveModeAgentDefaults } from "../adapters/resolve-effective-mode-agent-defaults.js";
+import { getDefaultAgentStackAssignmentConfig } from "../config/default-agent-stack-assignment-config.js";
 import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-resolution.js";
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
@@ -451,6 +452,13 @@ test("default-agent type mapper does not mutate inputs", () => {
   assert.deepEqual(rows, rowsSnapshot);
 });
 
+test("default assignment config maps roleplay to the Pecorino roleplay stack", () => {
+  const config = getDefaultAgentStackAssignmentConfig();
+
+  assert.equal(config.chatStackIdOverride ?? null, null);
+  assert.equal(config.modeDefaultStackIds?.roleplay, PECORINO_ROLEPLAY_STACK_ID);
+});
+
 test("roleplay chat creation finalizer uses translated ids for mode_default when translation is complete", () => {
   const result = finalizeRoleplayChatCreationActiveAgentIds({
     source: "mode_default",
@@ -526,4 +534,16 @@ test("roleplay chat creation finalizer falls back when missing types remain", ()
   });
 
   assert.equal(result, null);
+});
+
+test("effective defaults with the default assignment config resolves roleplay to mode_default and Pecorino defaults", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+    assignmentConfig: getDefaultAgentStackAssignmentConfig(),
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "mode_default");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
 });

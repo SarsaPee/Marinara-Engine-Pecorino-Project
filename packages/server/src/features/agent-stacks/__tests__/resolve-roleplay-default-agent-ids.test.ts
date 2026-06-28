@@ -2,9 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CONVERSATION_AGENT_IDS,
+  GAME_AGENT_IDS,
   PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS,
   PECORINO_ROLEPLAY_STACK_ID,
   ROLEPLAY_DEFAULT_AGENT_IDS,
+  VISUAL_NOVEL_DEFAULT_AGENT_IDS,
+  getChatModeCapabilities,
+  getChatModeDefaultAgentIds,
 } from "@marinara-engine/shared";
 import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-resolution.js";
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
@@ -218,4 +223,34 @@ test("diagnostic helper reports none for non-roleplay mode with no assignment", 
   assert.equal(result.details.resolvedStackId, null);
   assert.equal(result.details.agentCount, 0);
   assert.equal(result.details.isLegacyFallback, false);
+});
+
+test("shared chat-mode helper returns roleplay defaults in order", () => {
+  assert.deepEqual(getChatModeDefaultAgentIds("roleplay"), [...ROLEPLAY_DEFAULT_AGENT_IDS]);
+});
+
+test("shared chat-mode helper returns conversation defaults in order", () => {
+  assert.deepEqual(getChatModeDefaultAgentIds("conversation"), [...CONVERSATION_AGENT_IDS]);
+});
+
+test("shared chat-mode helper returns visual novel defaults in order", () => {
+  assert.deepEqual(getChatModeDefaultAgentIds("visual_novel"), [...VISUAL_NOVEL_DEFAULT_AGENT_IDS]);
+});
+
+test("shared chat-mode helper returns game defaults in order", () => {
+  assert.deepEqual(getChatModeDefaultAgentIds("game"), [...GAME_AGENT_IDS]);
+});
+
+test("shared chat-mode helper null and undefined fallback matches capabilities fallback", () => {
+  assert.deepEqual(getChatModeDefaultAgentIds(null), [...getChatModeCapabilities(null).defaultAgentIds]);
+  assert.deepEqual(getChatModeDefaultAgentIds(undefined), [...getChatModeCapabilities(undefined).defaultAgentIds]);
+});
+
+test("shared chat-mode helper returns copies, not the original arrays", () => {
+  const roleplayIds = getChatModeDefaultAgentIds("roleplay");
+  const original = getChatModeCapabilities("roleplay").defaultAgentIds;
+
+  assert.notEqual(roleplayIds, original);
+  roleplayIds.push("fake-agent");
+  assert.deepEqual([...original], [...ROLEPLAY_DEFAULT_AGENT_IDS]);
 });

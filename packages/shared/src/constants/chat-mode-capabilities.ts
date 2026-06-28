@@ -197,6 +197,10 @@ export function getChatModeCapabilities(mode: ChatMode | null | undefined): Chat
   return CHAT_MODE_CAPABILITIES[mode ?? "roleplay"] ?? CHAT_MODE_CAPABILITIES.roleplay;
 }
 
+export function getChatModeDefaultAgentIds(mode: ChatMode | null | undefined): string[] {
+  return [...getChatModeCapabilities(mode).defaultAgentIds];
+}
+
 export function isAgentAvailableInChatMode(mode: ChatMode | null | undefined, agentId: string): boolean {
   if (isRetiredBuiltInAgentId(agentId)) return false;
   const normalizedMode = mode ?? "roleplay";

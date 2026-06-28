@@ -11,3 +11,18 @@ export function matchesActiveAgentSelection(
 }
 
 export const matchesActiveAgentSelectionForTest = matchesActiveAgentSelection;
+
+export function resolveActiveAgentSelectionOrder(
+  orderedActiveAgentIds: readonly string[],
+  candidate: { id?: string | null; type: string },
+): number | null {
+  const candidateIds = [candidate.id, candidate.type, `${BUILTIN_AGENT_CONFIG_ID_PREFIX}${candidate.type}`].filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+
+  for (let index = 0; index < orderedActiveAgentIds.length; index += 1) {
+    if (candidateIds.includes(orderedActiveAgentIds[index]!)) return index;
+  }
+
+  return null;
+}

@@ -185,6 +185,8 @@ function buildCustomToolHiddenContext(args: {
   personaId: string | null;
   agentContext: AgentContext;
   gameState: unknown;
+  activeLorebookIds: string[];
+  resolvedAgents: ResolvedAgent[];
 }): CustomToolHiddenContext {
   const characters = args.agentContext.characters.map((character) => ({
     id: character.id,
@@ -219,6 +221,19 @@ function buildCustomToolHiddenContext(args: {
   const lastInput =
     [...args.agentContext.recentMessages].reverse().find((message) => message.role === "user")?.content ?? "";
   const now = new Date();
+  const summary = typeof args.chatMetadata.summary === "string" ? args.chatMetadata.summary : "";
+  const activeAgentIds = Array.isArray(args.chatMetadata.activeAgentIds)
+    ? args.chatMetadata.activeAgentIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+  const activeToolIds = Array.isArray(args.chatMetadata.activeToolIds)
+    ? args.chatMetadata.activeToolIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+  const resolvedAgents = args.resolvedAgents.map((agent) => ({
+    id: agent.id,
+    type: agent.type,
+    name: agent.name,
+    phase: agent.phase,
+  }));
 
   return {
     chatId: args.chatId,
@@ -263,6 +278,16 @@ function buildCustomToolHiddenContext(args: {
       role: message.role,
       characterId: message.characterId ?? null,
     })),
+    summary,
+    runtime: {
+      enableAgents: args.chatMetadata.enableAgents === true,
+      enableTools: args.chatMetadata.enableTools === true,
+      activeAgentIds,
+      activeToolIds,
+      activeLorebookIds: args.activeLorebookIds,
+      promptCharacterIds: args.promptCharacterIds,
+      resolvedAgents,
+    },
     gameState: args.gameState ?? null,
   };
 }
@@ -879,6 +904,8 @@ export async function resolveGenerationTools({
       personaId,
       agentContext,
       gameState,
+      activeLorebookIds,
+      resolvedAgents,
     }),
     customTools: customToolDefs,
     spotify: spotifyCreds,

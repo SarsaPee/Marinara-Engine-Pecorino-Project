@@ -20,6 +20,7 @@ import { seedDefaultConnection } from "./db/seed-connection.js";
 import { seedDefaultBackgrounds } from "./db/seed-backgrounds.js";
 import { seedDefaultGameAssets } from "./db/seed-game-assets.js";
 import { seedDefaultRegexScripts } from "./db/seed-regex.js";
+import { seedDefaultCustomTools } from "./db/seed-custom-tools.js";
 import { buildAssetManifest, ensureAssetDirs } from "./services/game/asset-manifest.service.js";
 import { recoverGalleryImages } from "./services/storage/gallery-recovery.js";
 import { migrateCharacterExtendedDescriptionsToLorebooks } from "./services/lorebook/extended-descriptions-migration.js";
@@ -97,6 +98,7 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
     await seedDefaultConnection(db);
   }
   await seedDefaultRegexScripts(db);
+  await seedDefaultCustomTools(db);
   await migrateCharacterExtendedDescriptionsToLorebooks(db);
   await seedDefaultBackgrounds();
   await seedDefaultGameAssets();

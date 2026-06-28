@@ -195,6 +195,12 @@ export interface ToolExecutionContext {
   spotifyRepeatAfterPlay?: "off" | "track" | "context";
 }
 
+const CUSTOM_SURFACED_INTERNAL_TOOL_NAMES = new Set([
+  "add_chat_character",
+  "remove_chat_character",
+  "set_chat_character_active",
+]);
+
 /**
  * Execute a batch of tool calls, returning results for each.
  * Supports built-in tools and user-defined custom tools.
@@ -239,6 +245,14 @@ async function executeSingleTool(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
 ): Promise<unknown> {
+  const hasCustomSurfaceDefinition = context?.customTools?.some((tool) => tool.name === name) ?? false;
+  if (CUSTOM_SURFACED_INTERNAL_TOOL_NAMES.has(name) && !hasCustomSurfaceDefinition) {
+    return {
+      error: `Unknown tool: ${name}`,
+      available: (context?.customTools ?? []).map((tool) => tool.name),
+    };
+  }
+
   switch (name) {
     case "roll_dice":
       return rollDice(args);
@@ -298,6 +312,9 @@ async function executeSingleTool(
           "append_chat_summary",
           "read_chat_variable",
           "write_chat_variable",
+          "add_chat_character",
+          "remove_chat_character",
+          "set_chat_character_active",
           "spotify_get_current_playback",
           "spotify_get_playlists",
           "spotify_get_playlist_tracks",

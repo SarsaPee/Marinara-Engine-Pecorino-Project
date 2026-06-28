@@ -52,6 +52,12 @@ const TOOL_ORDER = [
   "spotify-set-volume",
 ];
 
+const EXCLUDED_BUILT_IN_TOOL_FOLDERS = new Set([
+  "add-chat-character",
+  "remove-chat-character",
+  "set-chat-character-active",
+]);
+
 async function readManifestFolders(baseDir, manifestFile = "manifest.ts") {
   const entries = await readdir(baseDir, { withFileTypes: true });
   const manifests = [];
@@ -70,6 +76,10 @@ async function readManifestFolders(baseDir, manifestFile = "manifest.ts") {
       throw new Error(`Could not find exported manifest const in ${manifestPath}`);
     }
     manifests.push({ folder: entry.name, exportName: match[1] });
+  }
+
+  if (baseDir.includes(join("features", "function-calls", "tools"))) {
+    return manifests.filter(({ folder }) => !EXCLUDED_BUILT_IN_TOOL_FOLDERS.has(folder));
   }
 
   return manifests;

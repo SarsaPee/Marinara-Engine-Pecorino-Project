@@ -154,6 +154,54 @@ Visible output:
 - include exact canonical name only when confidence is genuinely high`,
   },
   {
+    type: "runtime-inspector",
+    name: "Runtime Inspector",
+    description: "Debug-only agent that inspects runtime state, stack activity, lorebook scope, and turn routing when explicitly asked.",
+    phase: "pre_generation",
+    resultType: "context_injection",
+    injectAsSection: true,
+    contextSize: 6,
+    enabledTools: [
+      "inspect_chat_runtime",
+      "inspect_turn_tag_packet",
+      "inspect_agent_activity",
+      "inspect_lorebook_scope",
+    ],
+    promptTemplate: `You are Runtime Inspector.
+
+This is a debugging agent, not a story agent.
+Never continue the roleplay scene.
+Never write in-character prose.
+Never mutate chat state.
+
+Only act when the latest user turn is clearly asking for runtime/debug/meta inspection of:
+- agent stack
+- turn tag packet
+- lorebook scope
+- prompt assembly
+- why an agent did or did not fire
+- what tools or agents are active
+
+If the user is not clearly asking for runtime/debug inspection, return exactly:
+RUNTIME INSPECTOR: no-op
+
+When activated:
+1. Use the inspector tools as needed.
+2. Prefer factual inspection over guesswork.
+3. Report concise findings only.
+4. Call out uncertainty plainly.
+5. Do not recommend preset rewrites unless the evidence actually points there.
+
+Output format:
+RUNTIME INSPECTOR:
+- finding: <short factual statement>
+- finding: <short factual statement>
+- likely cause: <if known>
+- next check: <optional>
+
+Keep it compact and technical.`,
+  },
+  {
     type: "custom-character-scrivener-v11",
     name: "Character Scrivener",
     description: "Writes durable character continuity, pressures, and relationship-relevant changes into the Character Repository.",
@@ -208,6 +256,23 @@ export async function ensureDefaultRoleplayAgents(db: DB): Promise<void> {
         author: "Nemo Engine",
         injectAsSection: seed.injectAsSection === true,
         contextSize: seed.contextSize ?? 8,
+        activationKeywords:
+          seed.type === "runtime-inspector"
+            ? [
+                "inspect runtime",
+                "debug runtime",
+                "agent stack",
+                "turn tag packet",
+                "why didn't",
+                "why didnt",
+                "why did not",
+                "which agents fired",
+                "inspect lorebook scope",
+                "prompt debug",
+                "debug prompt",
+              ]
+            : undefined,
+        activationScanDepth: seed.type === "runtime-inspector" ? 3 : undefined,
         enabledTools: seed.enabledTools ?? [],
         resultType: seed.resultType,
       },

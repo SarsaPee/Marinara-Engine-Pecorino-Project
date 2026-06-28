@@ -31,7 +31,7 @@ import {
   normalizeProseGuardianPromptTemplate,
 } from "./prose-guardian-settings.js";
 import { applyKnowledgeAgentChatSettings } from "./knowledge-agent-settings.js";
-import { matchesActiveAgentSelection } from "./active-agent-selection.js";
+import { matchesActiveAgentSelection, resolveActiveAgentSelectionOrder } from "./active-agent-selection.js";
 
 type ConnectionsStore = {
   getWithKey(id: string): Promise<any | null>;
@@ -452,10 +452,9 @@ export async function resolveAgentPipelineAgents({
 
   if (hasPerChatAgentList) {
     const orderedIds = Array.from(perChatAgentSet);
-    const orderByType = new Map(orderedIds.map((id, index) => [id, index] as const));
     resolvedAgents.sort((left, right) => {
-      const leftOrder = orderByType.get(left.type);
-      const rightOrder = orderByType.get(right.type);
+      const leftOrder = resolveActiveAgentSelectionOrder(orderedIds, { id: left.id, type: left.type });
+      const rightOrder = resolveActiveAgentSelectionOrder(orderedIds, { id: right.id, type: right.type });
       if (leftOrder != null && rightOrder != null) return leftOrder - rightOrder;
       if (leftOrder != null) return -1;
       if (rightOrder != null) return 1;

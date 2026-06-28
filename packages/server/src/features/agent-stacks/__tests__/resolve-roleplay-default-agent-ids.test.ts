@@ -6,6 +6,7 @@ import {
   PECORINO_ROLEPLAY_STACK_ID,
   ROLEPLAY_DEFAULT_AGENT_IDS,
 } from "@marinara-engine/shared";
+import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-resolution.js";
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
 import { resolveRoleplayDefaultAgentIds } from "../bridges/resolve-roleplay-default-agent-ids.js";
@@ -139,4 +140,82 @@ test("assignment config facade returns none for non-roleplay mode with no assign
   assert.equal(result.source, "none");
   assert.equal(result.stackId, null);
   assert.deepEqual(result.agentIds, []);
+});
+
+test("diagnostic helper reports legacy roleplay fallback with matching agent count", () => {
+  const result = inspectAgentStackResolution({
+    mode: "roleplay",
+    assignmentConfig: {},
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "legacy_fallback");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, [...ROLEPLAY_DEFAULT_AGENT_IDS]);
+  assert.equal(result.details.hasAssignmentConfig, true);
+  assert.equal(result.details.hasChatOverride, false);
+  assert.equal(result.details.modeDefaultStackId, null);
+  assert.equal(result.details.resolvedStackId, null);
+  assert.equal(result.details.agentCount, ROLEPLAY_DEFAULT_AGENT_IDS.length);
+  assert.equal(result.details.isLegacyFallback, true);
+});
+
+test("diagnostic helper reports roleplay mode default resolution details", () => {
+  const result = inspectAgentStackResolution({
+    mode: "roleplay",
+    assignmentConfig: {
+      modeDefaultStackIds: {
+        roleplay: PECORINO_ROLEPLAY_STACK_ID,
+      },
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "mode_default");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+  assert.equal(result.details.hasAssignmentConfig, true);
+  assert.equal(result.details.hasChatOverride, false);
+  assert.equal(result.details.modeDefaultStackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.equal(result.details.resolvedStackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.equal(result.details.agentCount, PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS.length);
+  assert.equal(result.details.isLegacyFallback, false);
+});
+
+test("diagnostic helper reports roleplay chat override details", () => {
+  const result = inspectAgentStackResolution({
+    mode: "roleplay",
+    assignmentConfig: {
+      chatStackIdOverride: PECORINO_ROLEPLAY_STACK_ID,
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "chat_override");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+  assert.equal(result.details.hasAssignmentConfig, true);
+  assert.equal(result.details.hasChatOverride, true);
+  assert.equal(result.details.modeDefaultStackId, null);
+  assert.equal(result.details.resolvedStackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.equal(result.details.agentCount, PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS.length);
+  assert.equal(result.details.isLegacyFallback, false);
+});
+
+test("diagnostic helper reports none for non-roleplay mode with no assignment", () => {
+  const result = inspectAgentStackResolution({
+    mode: "conversation",
+    assignmentConfig: {},
+  });
+
+  assert.equal(result.mode, "conversation");
+  assert.equal(result.source, "none");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, []);
+  assert.equal(result.details.hasAssignmentConfig, true);
+  assert.equal(result.details.hasChatOverride, false);
+  assert.equal(result.details.modeDefaultStackId, null);
+  assert.equal(result.details.resolvedStackId, null);
+  assert.equal(result.details.agentCount, 0);
+  assert.equal(result.details.isLegacyFallback, false);
 });

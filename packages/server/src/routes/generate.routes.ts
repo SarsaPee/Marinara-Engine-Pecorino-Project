@@ -723,6 +723,8 @@ function appendContinuationMessageContent(existingContent: unknown, continuation
 }
 
 const CONTINUE_ASSISTANT_MESSAGE_PROMPT = "Your last message got cut off! Please, continue!";
+const ROLEPLAY_COLD_START_PROMPT =
+  "Begin or continue the roleplay scene from the currently established context. If context is sparse, start small: anchor place, bodies, and immediate social reality, then move into one concrete playable beat. Do not ask the user to paste a summary or provide context unless the request is explicitly OOC.";
 
 function isAutomaticRoleplaySummaryEnabled(chatMetadata: Record<string, unknown>): boolean {
   if (chatMetadata.automaticSummaryEnabled === false) return false;
@@ -5016,7 +5018,9 @@ export async function generateRoutes(app: FastifyInstance) {
         // If the knowledge-router agent is enabled, load candidate lorebook entries
         // for routing. The router picks IDs from this list and the selected entries
         // are injected verbatim — no per-entry summarization pass.
-        const knowledgeRouterAgent = resolvedAgents.find((a) => a.type === "knowledge-router");
+        const knowledgeRouterAgent = shouldRunAgentForTurnTagPacket("knowledge-router", derivedTurnTagPacket)
+          ? resolvedAgents.find((a) => a.type === "knowledge-router")
+          : null;
         const promptCharacterIdSet = new Set(promptCharacterIds);
         const knowledgeRouterActiveCharacterTags = Array.from(
           new Set(
@@ -6204,6 +6208,20 @@ export async function generateRoutes(app: FastifyInstance) {
               : message.content
             ).replace(/\n([ \t]*\n){2,}/g, "\n\n"),
           }));
+          const hasPromptTurnForGeneration = preparedMessagesForGen.some(
+            (message) => message.role === "user" || message.role === "assistant",
+          );
+          if (!hasPromptTurnForGeneration && (chatMode === "roleplay" || chatMode === "visual_novel")) {
+            preparedMessagesForGen.push({
+              role: "user",
+              content: ROLEPLAY_COLD_START_PROMPT,
+              contextKind: "prompt",
+            });
+            logger.debug(
+              "[generate/%s] Added cold-start user cue because assembled prompt had no user/assistant turns",
+              chatMode,
+            );
+          }
           dedupeLastMessageWrappers(preparedMessagesForGen);
           if (
             deferCharacterMacros &&

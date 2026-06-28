@@ -184,6 +184,45 @@ function entryMatchesExactTerm(entry: LorebookEntry, term: string): boolean {
   return haystacks.some((haystack) => haystack.includes(normalizedTerm));
 }
 
+function isFrameworkLikeEntry(entry: LorebookEntry): boolean {
+  const parts = [
+    entry.name,
+    entry.tag ?? "",
+    ...(Array.isArray(entry.keys) ? entry.keys : []),
+    entry.description ?? "",
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.toLowerCase());
+
+  return parts.some(
+    (value) =>
+      value.includes("bunnyrx") ||
+      value.includes("bsm-5") ||
+      value.includes("bsm5") ||
+      value.includes("cot lens") ||
+      value.includes("package insert") ||
+      value.includes("phys insert"),
+  );
+}
+
+function applyTurnTagCandidateGuards(entries: LorebookEntry[], context: AgentContext): LorebookEntry[] {
+  const packet = parseTurnTagPacketFromAgentContext(context);
+  if (!packet) return entries;
+
+  const routerMode = packet.agent_addressing?.knowledge_router;
+  const retrievalMode = packet.retrieval_policy?.mode;
+  if (routerMode === "off" || retrievalMode === "none") return [];
+
+  const tags = new Set(
+    Array.isArray(packet.tags) ? packet.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
+  );
+  if (tags.has("NO_FRAMEWORK_LENS") || tags.has("NO_BUNNYRX_UNLESS_EXPLICIT")) {
+    return entries.filter((entry) => !isFrameworkLikeEntry(entry));
+  }
+
+  return entries;
+}
+
 function filterExactFirstCandidates(entries: LorebookEntry[], context: AgentContext): LorebookEntry[] | null {
   const packet = parseTurnTagPacketFromAgentContext(context);
   const mode = packet?.retrieval_policy?.mode;
@@ -258,7 +297,10 @@ export async function prepareKnowledgeRouterCandidates(
   options: KnowledgeRouterCandidateOptions = {},
 ): Promise<LorebookEntry[]> {
   if (entries.length === 0) return [];
-  const exactFirstCandidates = filterExactFirstCandidates(entries, context);
+  const guardedEntries = applyTurnTagCandidateGuards(entries, context);
+  if (guardedEntries.length === 0) return [];
+
+  const exactFirstCandidates = filterExactFirstCandidates(guardedEntries, context);
   if (exactFirstCandidates) {
     return exactFirstCandidates;
   }
@@ -270,20 +312,22 @@ export async function prepareKnowledgeRouterCandidates(
     }));
   const activatedEntries =
     options.activatedEntries ??
-    buildKeywordActivatedRouterEntries(options.keywordScanEntries ?? entries, scanMessages, options.scanOptions);
+    buildKeywordActivatedRouterEntries(options.keywordScanEntries ?? guardedEntries, scanMessages, options.scanOptions);
   const keywordScanEntries =
     options.activatedEntries && options.keywordScanEntries
       ? buildKeywordActivatedRouterEntries(options.keywordScanEntries, scanMessages, options.scanOptions)
       : [];
   const fallbackCandidates = mergeKnowledgeRouterCandidates(
     [],
-    [...activatedEntries, ...keywordScanEntries, ...entries],
+    [...activatedEntries, ...keywordScanEntries, ...guardedEntries],
   );
-  if (options.semanticEnabled === false) return fallbackCandidates;
+  const packet = parseTurnTagPacketFromAgentContext(context);
+  const semanticAllowedByPacket = packet?.retrieval_policy?.semantic_support !== false;
+  if (options.semanticEnabled === false || !semanticAllowedByPacket) return fallbackCandidates;
   const query = buildKnowledgeRouterQuery(context);
   let semanticMatches: SemanticLorebookMatch[] | null;
   try {
-    semanticMatches = await semanticShortlistLorebookEntries(entries, query, {
+    semanticMatches = await semanticShortlistLorebookEntries(guardedEntries, query, {
       topK: normalizePositiveInteger(options.semanticTopK, DEFAULT_SEMANTIC_TOP_K),
       localEmbedder: options.localEmbedder,
       embeddingSource: options.embeddingSource,
@@ -299,7 +343,7 @@ export async function prepareKnowledgeRouterCandidates(
   }
 
   const candidates = mergeKnowledgeRouterCandidates(semanticMatches, [...activatedEntries, ...keywordScanEntries]);
-  if (candidates.length === 0) return entries;
+  if (candidates.length === 0) return guardedEntries;
   return candidates;
 }
 

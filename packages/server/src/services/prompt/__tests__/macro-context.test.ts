@@ -27,6 +27,7 @@ test("buildCharacterPostHistoryEntry preserves multi-character labeling", () => 
   });
 
   assert.equal(entry.role, "system");
-  assert.match(entry.content, /Sarah Clarke silent post-history portrayal instructions/i);
+  assert.match(entry.content, /silent portrayal constraints for Sarah Clarke/i);
+  assert.match(entry.content, /Apply it only while writing the next in-character response\./i);
   assert.match(entry.content, /Stay dry and observant\./);
 });

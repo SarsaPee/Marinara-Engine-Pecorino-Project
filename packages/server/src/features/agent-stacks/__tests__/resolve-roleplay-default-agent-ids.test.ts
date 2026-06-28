@@ -12,6 +12,7 @@ import {
   getChatModeCapabilities,
   getChatModeDefaultAgentIds,
 } from "@marinara-engine/shared";
+import { resolveEffectiveModeAgentDefaults } from "../adapters/resolve-effective-mode-agent-defaults.js";
 import { inspectAgentStackResolution } from "../diagnostics/inspect-agent-stack-resolution.js";
 import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
@@ -278,5 +279,104 @@ test("CHAT_MODES defaultAgents arrays are copies, not shared references", () => 
 
   assert.notEqual(conversationDefaults, conversationHelperDefaults);
   conversationDefaults.push("fake-agent");
+  assert.deepEqual(getChatModeDefaultAgentIds("conversation"), [...CONVERSATION_AGENT_IDS]);
+});
+
+test("effective defaults adapter returns legacy_fallback for roleplay with no assignment", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "legacy_fallback");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, [...ROLEPLAY_DEFAULT_AGENT_IDS]);
+});
+
+test("effective defaults adapter returns mode_default for roleplay mode default stack", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+    assignmentConfig: {
+      modeDefaultStackIds: {
+        roleplay: PECORINO_ROLEPLAY_STACK_ID,
+      },
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "mode_default");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+});
+
+test("effective defaults adapter returns chat_override for roleplay chat override stack", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+    assignmentConfig: {
+      chatStackIdOverride: PECORINO_ROLEPLAY_STACK_ID,
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "chat_override");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+});
+
+test("effective defaults adapter returns shared_legacy for conversation with no assignment", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "conversation",
+  });
+
+  assert.equal(result.mode, "conversation");
+  assert.equal(result.source, "shared_legacy");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, getChatModeDefaultAgentIds("conversation"));
+});
+
+test("effective defaults adapter returns shared_legacy for visual novel with no assignment", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "visual_novel",
+  });
+
+  assert.equal(result.mode, "visual_novel");
+  assert.equal(result.source, "shared_legacy");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, getChatModeDefaultAgentIds("visual_novel"));
+});
+
+test("effective defaults adapter returns shared_legacy for game with no assignment", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "game",
+  });
+
+  assert.equal(result.mode, "game");
+  assert.equal(result.source, "shared_legacy");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, getChatModeDefaultAgentIds("game"));
+});
+
+test("effective defaults adapter includes diagnostics only when requested", () => {
+  const withoutDiagnostics = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+  });
+  const withDiagnostics = resolveEffectiveModeAgentDefaults({
+    mode: "roleplay",
+    includeDiagnostics: true,
+  });
+
+  assert.equal("diagnostics" in withoutDiagnostics, false);
+  assert.ok(withDiagnostics.diagnostics);
+  assert.equal(withDiagnostics.diagnostics?.source, "legacy_fallback");
+});
+
+test("effective defaults adapter returns mutable copies of agent ids", () => {
+  const result = resolveEffectiveModeAgentDefaults({
+    mode: "conversation",
+  });
+
+  const helperDefaults = getChatModeDefaultAgentIds("conversation");
+  assert.notEqual(result.agentIds, helperDefaults);
+  result.agentIds.push("fake-agent");
   assert.deepEqual(getChatModeDefaultAgentIds("conversation"), [...CONVERSATION_AGENT_IDS]);
 });

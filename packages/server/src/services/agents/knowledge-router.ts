@@ -184,25 +184,64 @@ function entryMatchesExactTerm(entry: LorebookEntry, term: string): boolean {
   return haystacks.some((haystack) => haystack.includes(normalizedTerm));
 }
 
-function isFrameworkLikeEntry(entry: LorebookEntry): boolean {
-  const parts = [
-    entry.name,
-    entry.tag ?? "",
-    ...(Array.isArray(entry.keys) ? entry.keys : []),
-    entry.description ?? "",
-  ]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => value.toLowerCase());
+const FRAMEWORK_ROUTER_CLASSES = [
+  "framework_lens",
+  "bunnyrx",
+  "requires_explicit_activation",
+  "no_ambient_retrieval",
+] as const;
 
-  return parts.some(
-    (value) =>
-      value.includes("bunnyrx") ||
-      value.includes("bsm-5") ||
-      value.includes("bsm5") ||
-      value.includes("cot lens") ||
-      value.includes("package insert") ||
-      value.includes("phys insert"),
-  );
+function normalizeRouterClass(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[<>\[\]{}()]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function readStringArray(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function readEntryMetadata(entry: LorebookEntry): Record<string, unknown> | null {
+  const metadata = (entry as unknown as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  return metadata as Record<string, unknown>;
+}
+
+function collectExplicitRouterClasses(entry: LorebookEntry): string[] {
+  const metadata = readEntryMetadata(entry);
+  const rawClasses = [
+    ...readStringArray(metadata?.routerClass),
+    ...readStringArray(metadata?.routerClasses),
+    ...readStringArray(metadata?.tags),
+    ...readStringArray((entry as unknown as Record<string, unknown>).tags),
+    ...readStringArray(entry.tag),
+  ];
+  return Array.from(new Set(rawClasses.map(normalizeRouterClass).filter(Boolean)));
+}
+
+function collectFallbackRouterClassesFromKeys(entry: LorebookEntry): string[] {
+  // Temporary migration fallback for older lorebooks that have not yet been
+  // tagged with router metadata/classes. Remove once framework packs are tagged.
+  return Array.from(new Set((Array.isArray(entry.keys) ? entry.keys : []).map(normalizeRouterClass).filter(Boolean)));
+}
+
+export function entryHasRouterClass(entry: LorebookEntry, className: string): boolean {
+  const normalizedClass = normalizeRouterClass(className);
+  if (!normalizedClass) return false;
+
+  const explicitClasses = collectExplicitRouterClasses(entry);
+  if (explicitClasses.length > 0) return explicitClasses.includes(normalizedClass);
+
+  return collectFallbackRouterClassesFromKeys(entry).includes(normalizedClass);
+}
+
+export function entryIsFrameworkLens(entry: LorebookEntry): boolean {
+  return FRAMEWORK_ROUTER_CLASSES.some((className) => entryHasRouterClass(entry, className));
 }
 
 function applyTurnTagCandidateGuards(entries: LorebookEntry[], context: AgentContext): LorebookEntry[] {
@@ -217,7 +256,7 @@ function applyTurnTagCandidateGuards(entries: LorebookEntry[], context: AgentCon
     Array.isArray(packet.tags) ? packet.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0) : [],
   );
   if (tags.has("NO_FRAMEWORK_LENS") || tags.has("NO_BUNNYRX_UNLESS_EXPLICIT")) {
-    return entries.filter((entry) => !isFrameworkLikeEntry(entry));
+    return entries.filter((entry) => !entryIsFrameworkLens(entry));
   }
 
   return entries;

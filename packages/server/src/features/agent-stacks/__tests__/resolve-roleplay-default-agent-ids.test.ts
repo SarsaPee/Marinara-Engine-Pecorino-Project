@@ -20,6 +20,8 @@ import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-age
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
 import { resolveRoleplayDefaultAgentIds } from "../bridges/resolve-roleplay-default-agent-ids.js";
 import { finalizeRoleplayChatCreationActiveAgentIds } from "../../../services/storage/chats.storage.js";
+import type { AgentContext, LorebookEntry } from "@marinara-engine/shared";
+import { entryHasRouterClass, entryIsFrameworkLens, prepareKnowledgeRouterCandidates } from "../../../services/agents/knowledge-router.js";
 
 test("roleplay bridge falls back to legacy defaults with no stack assignment", () => {
   const result = resolveRoleplayDefaultAgentIds({
@@ -546,4 +548,168 @@ test("effective defaults with the default assignment config resolves roleplay to
   assert.equal(result.source, "mode_default");
   assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
   assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+});
+
+
+function makeRouterTestEntry(overrides: Record<string, unknown> = {}): LorebookEntry {
+  return {
+    id: "entry-1",
+    lorebookId: "lorebook-1",
+    name: "Entry",
+    content: "Entry content",
+    description: "Entry description",
+    keys: [],
+    secondaryKeys: [],
+    enabled: true,
+    constant: false,
+    selective: false,
+    selectiveLogic: "or",
+    probability: null,
+    scanDepth: null,
+    matchWholeWords: false,
+    caseSensitive: false,
+    useRegex: false,
+    characterFilterMode: "any",
+    characterFilterIds: [],
+    characterTagFilterMode: "any",
+    characterTagFilters: [],
+    generationTriggerFilterMode: "any",
+    generationTriggerFilters: [],
+    additionalMatchingSources: [],
+    position: 0,
+    depth: 0,
+    order: 0,
+    role: "system",
+    sticky: null,
+    cooldown: null,
+    delay: null,
+    ephemeral: null,
+    group: "",
+    groupWeight: null,
+    folderId: null,
+    locked: false,
+    preventRecursion: false,
+    excludeRecursion: false,
+    delayUntilRecursion: false,
+    tag: "",
+    relationships: {},
+    dynamicState: {},
+    activationConditions: [],
+    schedule: null,
+    excludeFromVectorization: false,
+    embedding: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  } as unknown as LorebookEntry;
+}
+
+function makeRouterTestContext(packet: Record<string, unknown>): AgentContext {
+  return {
+    recentMessages: [{ role: "user", content: "Tell me about the scene." }],
+    memory: {
+      _turnTagPacket: JSON.stringify(packet),
+    },
+    chatSummary: "",
+    gameState: null,
+  } as unknown as AgentContext;
+}
+
+test("knowledge router recognizes explicit framework router classes", () => {
+  const entry = makeRouterTestEntry({
+    metadata: {
+      routerClasses: ["framework_lens", "requires_explicit_activation"],
+      tags: ["bunnyrx"],
+    },
+  });
+
+  assert.equal(entryHasRouterClass(entry, "framework_lens"), true);
+  assert.equal(entryHasRouterClass(entry, "bunnyrx"), true);
+  assert.equal(entryHasRouterClass(entry, "no_ambient_retrieval"), false);
+  assert.equal(entryIsFrameworkLens(entry), true);
+});
+
+test("knowledge router falls back to keys only when explicit router metadata is absent", () => {
+  const keyFallbackEntry = makeRouterTestEntry({ keys: ["<BunnyRX>"] });
+  const explicitEntry = makeRouterTestEntry({
+    keys: ["<BunnyRX>"],
+    metadata: { routerClasses: ["character"], tags: ["story"] },
+  });
+
+  assert.equal(entryHasRouterClass(keyFallbackEntry, "bunnyrx"), true);
+  assert.equal(entryHasRouterClass(explicitEntry, "bunnyrx"), false);
+});
+
+test("knowledge router returns no candidates when turn-tag addressing disables it", async () => {
+  const result = await prepareKnowledgeRouterCandidates(
+    [makeRouterTestEntry()],
+    makeRouterTestContext({
+      agent_addressing: { knowledge_router: "off" },
+      retrieval_policy: { mode: "exact_first" },
+    }),
+    { semanticEnabled: false },
+  );
+
+  assert.deepEqual(result, []);
+});
+
+test("knowledge router returns no candidates when retrieval mode is none", async () => {
+  const result = await prepareKnowledgeRouterCandidates(
+    [makeRouterTestEntry()],
+    makeRouterTestContext({
+      agent_addressing: { knowledge_router: "light" },
+      retrieval_policy: { mode: "none" },
+    }),
+    { semanticEnabled: false },
+  );
+
+  assert.deepEqual(result, []);
+});
+
+test("NO_FRAMEWORK_LENS filters tagged framework entries but keeps normal entries", async () => {
+  const frameworkEntry = makeRouterTestEntry({
+    id: "framework-entry",
+    name: "BunnyRX MDMA",
+    metadata: { routerClasses: ["framework_lens"], tags: ["bunnyrx", "no_ambient_retrieval"] },
+  });
+  const normalEntry = makeRouterTestEntry({
+    id: "normal-entry",
+    name: "Sarah Clarke",
+    keys: ["Sarah"],
+  });
+
+  const result = await prepareKnowledgeRouterCandidates(
+    [frameworkEntry, normalEntry],
+    makeRouterTestContext({
+      tags: ["NO_FRAMEWORK_LENS"],
+      agent_addressing: { knowledge_router: "light" },
+      retrieval_policy: { mode: "contextual" },
+    }),
+    { semanticEnabled: false },
+  );
+
+  assert.deepEqual(
+    result.map((entry) => entry.id),
+    ["normal-entry"],
+  );
+});
+
+test("semantic_support false skips semantic shortlist even when a local embedder is present", async () => {
+  const result = await prepareKnowledgeRouterCandidates(
+    [makeRouterTestEntry({ id: "normal-entry" })],
+    makeRouterTestContext({
+      agent_addressing: { knowledge_router: "light" },
+      retrieval_policy: { mode: "contextual", semantic_support: false },
+    }),
+    {
+      localEmbedder: async () => {
+        throw new Error("semantic shortlist should not run");
+      },
+    },
+  );
+
+  assert.deepEqual(
+    result.map((entry) => entry.id),
+    ["normal-entry"],
+  );
 });

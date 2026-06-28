@@ -19,16 +19,57 @@ export const PECORINO_ROLEPLAY_STACK = {
           id: "classifier",
           name: "Turn Classifier",
           execution: "sequential",
-          nodes: [{ kind: "runtime", runtimeNodeType: "turn-classifier", id: "turn-classifier" }],
+          nodes: [
+            {
+              kind: "runtime",
+              runtimeNodeType: "turn-classifier",
+              id: "turn-classifier",
+            },
+          ],
         },
         {
           id: "routing-context",
           name: "Routing And Context",
           execution: "parallel",
           nodes: [
-            { kind: "agent", id: "knowledge-router" },
-            { kind: "runtime", runtimeNodeType: "knowledge-router", id: "knowledge-router-runtime" },
-            { kind: "runtime", runtimeNodeType: "stack-context-injector", id: "stack-context-injector" },
+            {
+              kind: "agent",
+              id: "knowledge-router",
+              lorebooks: {
+                read: {
+                  mode: "inherit_chat_active",
+                  selector: {
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                  notes: [
+                    "Knowledge Router can see the active lorebook universe.",
+                    "Turn-tag routing narrows what it should actually retrieve on a given turn.",
+                  ],
+                },
+              },
+            },
+            {
+              kind: "runtime",
+              runtimeNodeType: "knowledge-router",
+              id: "knowledge-router-runtime",
+              lorebooks: {
+                read: {
+                  mode: "inherit_chat_active",
+                  selector: {
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                },
+              },
+            },
+            {
+              kind: "runtime",
+              runtimeNodeType: "stack-context-injector",
+              id: "stack-context-injector",
+            },
           ],
         },
         {
@@ -36,16 +77,91 @@ export const PECORINO_ROLEPLAY_STACK = {
           name: "Advisory Agents",
           execution: "parallel",
           nodes: [
-            { kind: "agent", id: "custom-world-context-agent-v11" },
-            { kind: "agent", id: "custom-cast-advisor-v11" },
-            { kind: "agent", id: "custom-pressure-weaver-v11" },
+            {
+              kind: "agent",
+              id: "custom-world-context-agent-v11",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: ["melbourne_core", "melbourne_live_canon", "world_context"],
+                    categories: ["world"],
+                    includeGlobalLorebooks: true,
+                  },
+                  notes: [
+                    "World Context should prefer Melbourne canon books rather than broad framework packs.",
+                  ],
+                },
+              },
+            },
+            {
+              kind: "agent",
+              id: "custom-cast-advisor-v11",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: ["character_repository", "character_context", "character_framework"],
+                    categories: ["character", "npc"],
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                  notes: [
+                    "Cast Advisor should see character books plus the shared Character Repository.",
+                  ],
+                },
+              },
+            },
+            {
+              kind: "agent",
+              id: "custom-pressure-weaver-v11",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: ["divine_comedy_repository", "pressure_context", "bunnyrx", "framework_lens"],
+                    includeGlobalLorebooks: true,
+                  },
+                  notes: [
+                    "Pressure Weaver reads the why-layer: pressures, frameworks, and substance lenses.",
+                  ],
+                },
+              },
+            },
           ],
         },
         {
           id: "casting",
           name: "Casting Decisions",
           execution: "sequential",
-          nodes: [{ kind: "agent", id: "custom-casting-director-v11" }],
+          nodes: [
+            {
+              kind: "agent",
+              id: "custom-casting-director-v11",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: [
+                      "melbourne_core",
+                      "melbourne_live_canon",
+                      "character_repository",
+                      "character_context",
+                      "divine_comedy_repository",
+                      "pressure_context",
+                    ],
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                  notes: [
+                    "Casting Director should be able to reconcile world state, character state, and active pressures.",
+                  ],
+                },
+              },
+            },
+          ],
         },
       ],
     },
@@ -56,7 +172,23 @@ export const PECORINO_ROLEPLAY_STACK = {
           id: "retrieval",
           name: "Knowledge Retrieval",
           execution: "parallel",
-          nodes: [{ kind: "runtime", runtimeNodeType: "knowledge-retrieval", id: "knowledge-retrieval" }],
+          nodes: [
+            {
+              kind: "runtime",
+              runtimeNodeType: "knowledge-retrieval",
+              id: "knowledge-retrieval",
+              lorebooks: {
+                read: {
+                  mode: "inherit_chat_active",
+                  selector: {
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                },
+              },
+            },
+          ],
         },
       ],
     },
@@ -67,19 +199,87 @@ export const PECORINO_ROLEPLAY_STACK = {
           id: "world-writeback",
           name: "World Writeback",
           execution: "sequential",
-          nodes: [{ kind: "agent", id: "lorebook-keeper" }],
+          nodes: [
+            {
+              kind: "agent",
+              id: "lorebook-keeper",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: ["melbourne_core", "melbourne_live_canon", "world_context"],
+                    categories: ["world"],
+                    includeGlobalLorebooks: true,
+                  },
+                },
+                write: {
+                  mode: "selector_target",
+                  targetTag: "melbourne_live_canon",
+                  selector: {
+                    tags: ["melbourne_live_canon", "world_writeback_target"],
+                    categories: ["world"],
+                  },
+                  notes: [
+                    "Lorebook Keeper should only write durable world-state changes into Melbourne Live Canon.",
+                  ],
+                },
+              },
+            },
+          ],
         },
         {
           id: "character-writeback",
           name: "Character Writeback",
           execution: "sequential",
-          nodes: [{ kind: "agent", id: "custom-character-scrivener-v11" }],
+          nodes: [
+            {
+              kind: "agent",
+              id: "custom-character-scrivener-v11",
+              lorebooks: {
+                read: {
+                  mode: "filtered",
+                  selector: {
+                    tags: ["character_repository", "character_context", "character_framework"],
+                    categories: ["character", "npc"],
+                    includeEmbeddedCharacterBooks: true,
+                    includeCharacterLinkedLorebooks: true,
+                    includeGlobalLorebooks: true,
+                  },
+                },
+                write: {
+                  mode: "selector_target",
+                  targetTag: "character_repository",
+                  selector: {
+                    tags: ["character_repository", "character_writeback_target"],
+                    categories: ["character", "npc"],
+                  },
+                  notes: [
+                    "Character Scrivener should write durable character state only into the Character Repository.",
+                  ],
+                },
+              },
+            },
+          ],
         },
         {
           id: "tracker-writeback",
           name: "Tracker Writeback",
           execution: "sequential",
-          nodes: [{ kind: "agent", id: "custom-tracker" }],
+          nodes: [
+            {
+              kind: "agent",
+              id: "custom-tracker",
+              lorebooks: {
+                read: {
+                  mode: "disabled",
+                  notes: ["Custom Tracker should stay dashboard-only unless a future stack explicitly opts it into lorebook reads."],
+                },
+                write: {
+                  mode: "disabled",
+                },
+              },
+            },
+          ],
         },
       ],
     },

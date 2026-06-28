@@ -39,6 +39,10 @@ git push
 
 See [Branching Policy](BRANCHING.md) for the recommended downstream-development, upstream-sync, and upstream-PR workflow.
 
+## Agent Stacks
+
+For the Pecorino stack-level lorebook routing model, see [Agent Stack Lorebook Bindings](AGENT_STACK_LOREBOOK_BINDINGS.md).
+
 ## Updating From Upstream
 
 Fetch upstream, then merge or rebase intentionally:

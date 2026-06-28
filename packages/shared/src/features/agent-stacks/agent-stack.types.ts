@@ -1,5 +1,6 @@
 import type { AgentPhase } from "../../types/agent.js";
 import type { ChatMode } from "../../types/chat.js";
+import type { LorebookCategory } from "../../types/lorebook.js";
 
 export type RuntimeStackNodeType =
   | "turn-classifier"
@@ -7,16 +8,57 @@ export type RuntimeStackNodeType =
   | "knowledge-retrieval"
   | "stack-context-injector";
 
+export type AgentStackLorebookReadMode = "disabled" | "inherit_chat_active" | "filtered" | "explicit_only";
+
+export type AgentStackLorebookWriteMode = "disabled" | "explicit_target" | "selector_target";
+
+export interface AgentStackLorebookSelector {
+  lorebookIds?: readonly string[];
+  lorebookNames?: readonly string[];
+  categories?: readonly LorebookCategory[];
+  tags?: readonly string[];
+  excludeTags?: readonly string[];
+  includeEmbeddedCharacterBooks?: boolean;
+  includeCharacterLinkedLorebooks?: boolean;
+  includePersonaLinkedLorebooks?: boolean;
+  includeGlobalLorebooks?: boolean;
+}
+
+export interface AgentStackNodeLorebookReadBinding {
+  mode: AgentStackLorebookReadMode;
+  selector?: AgentStackLorebookSelector;
+  notes?: readonly string[];
+}
+
+export interface AgentStackNodeLorebookWriteBinding {
+  mode: AgentStackLorebookWriteMode;
+  targetLorebookId?: string | null;
+  targetLorebookName?: string | null;
+  targetCategory?: LorebookCategory | null;
+  targetTag?: string | null;
+  selector?: AgentStackLorebookSelector;
+  notes?: readonly string[];
+}
+
+export interface AgentStackNodeLorebookBinding {
+  read?: AgentStackNodeLorebookReadBinding;
+  write?: AgentStackNodeLorebookWriteBinding;
+}
+
+export interface AgentStackNodeBase {
+  lorebooks?: AgentStackNodeLorebookBinding;
+}
+
 export type AgentStackNodeRef =
-  | {
+  | (AgentStackNodeBase & {
       kind: "agent";
       id: string;
-    }
-  | {
+    })
+  | (AgentStackNodeBase & {
       kind: "runtime";
       runtimeNodeType: RuntimeStackNodeType;
       id?: string;
-    };
+    });
 
 export interface AgentStackMetadata {
   id: string;

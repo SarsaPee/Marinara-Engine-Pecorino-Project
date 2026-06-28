@@ -44,6 +44,26 @@ const metadataPatchQueues = new Map<string, Promise<void>>();
 const messageExtraPatchQueues = new Map<string, Promise<void>>();
 const swipeExtraPatchQueues = new Map<string, Promise<void>>();
 
+const LEGACY_ROLEPLAY_CHAT_CREATION_AGENT_CONFIG_TYPES = [
+  // Nemo v11.1 agents
+  "custom-world-context-agent-v11",
+  "custom-cast-advisor-v11",
+  "custom-pressure-weaver-v11",
+  "custom-casting-director-v11",
+  "custom-character-scrivener-v11",
+  // v1.6 custom agents
+  "world-state",
+  "character-tracker",
+  "prose-guardian",
+  "knowledge-router",
+  "knowledge-retrieval",
+  "continuity",
+  "editor",
+  "lorebook-keeper",
+  "character-scrivener",
+  "custom-tracker",
+] as const;
+
 async function withPatchQueue<T>(
   queues: Map<string, Promise<void>>,
   key: string,
@@ -157,6 +177,23 @@ function resolveTimestamps(overrides?: TimestampOverrides | null) {
 function serializeJsonField(value: unknown, fallback: Record<string, unknown>) {
   if (value === undefined || value === null) return JSON.stringify(fallback);
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+async function resolveLegacyRoleplayChatCreationActiveAgentIds(db: DB): Promise<string[]> {
+  try {
+    // Chat metadata.activeAgentIds currently stores agent config row IDs, not
+    // agent types or stack IDs. A later Agent Stacks bridge must translate
+    // stack/type defaults into concrete agent config IDs before replacing this.
+    const allCustomAgents = await db
+      .select()
+      .from(agentConfigs)
+      .where(inArray(agentConfigs.type, [...LEGACY_ROLEPLAY_CHAT_CREATION_AGENT_CONFIG_TYPES]))
+      .orderBy(agentConfigs.phase);
+    return allCustomAgents.map((agent) => agent.id);
+  } catch {
+    // Preserve existing first-boot / missing-agent behavior: silently return no ids.
+    return [];
+  }
 }
 
 function parseMessageCursor(before?: string): { createdAt: string; rowid: number } | null {
@@ -308,44 +345,12 @@ export function createChatsStorage(db: DB) {
       const timestamp = resolveTimestamps(timestampOverrides);
       const inheritedSchedules =
         input.mode === "conversation" ? await collectFreshConversationSchedules(input.characterIds) : {};
-      
-      // Auto-populate all custom RP agents for roleplay chats
+
       let activeAgentIds: string[] = [];
       if (input.mode === "roleplay") {
-        try {
-          // Get all custom agents, ordered by phase (pre_generation first, then post_processing)
-          const allCustomAgents = await db
-            .select()
-            .from(agentConfigs)
-            .where(
-              inArray(agentConfigs.type, [
-                // Nemo v11.1 agents
-                "custom-world-context-agent-v11",
-                "custom-cast-advisor-v11",
-                "custom-pressure-weaver-v11",
-                "custom-casting-director-v11",
-                "custom-character-scrivener-v11",
-                // v1.6 custom agents
-                "world-state",
-                "character-tracker",
-                "prose-guardian",
-                "knowledge-router",
-                "knowledge-retrieval",
-                "continuity",
-                "editor",
-                "lorebook-keeper",
-                "character-scrivener",
-                "custom-tracker",
-              ])
-            )
-            .orderBy(agentConfigs.phase);
-          activeAgentIds = allCustomAgents.map((agent) => agent.id);
-        } catch (err) {
-          // Silently fail if agents don't exist yet (e.g., during first boot)
-          // activeAgentIds remains empty
-        }
+        activeAgentIds = await resolveLegacyRoleplayChatCreationActiveAgentIds(db);
       }
-      
+
       const metadata: MetadataPatch = {
         summary: null,
         tags: [],

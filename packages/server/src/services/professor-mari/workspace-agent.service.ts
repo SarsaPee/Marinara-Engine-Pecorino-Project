@@ -62,6 +62,7 @@ import {
 } from "../generation/active-agent-selection.js";
 import { resolveEffectiveModeAgentDefaults } from "../../features/agent-stacks/adapters/resolve-effective-mode-agent-defaults.js";
 import { getDefaultAgentStackAssignmentConfig } from "../../features/agent-stacks/config/default-agent-stack-assignment-config.js";
+import { getPecorinoRoleplayStackManifest } from "../../features/agent-stacks/resolvers/stack-resolver.js";
 
 type DbConnectionWithKey = typeof apiConnections.$inferSelect & { apiKey: string };
 type WorkspaceConnection = Pick<
@@ -163,6 +164,8 @@ const READ_ONLY_WORKSPACE_COMMAND_NAMES = new Set<MariWorkspaceToolName>([
   "inspect_agent_settings",
   "inspect_lorebook_scope",
 ]);
+const MUTATION_CAPABLE_WORKSPACE_COMMAND_NAMES: readonly MariWorkspaceToolName[] = ["edit", "write", "bash"];
+const READ_ONLY_WORKSPACE_COMMAND_LIST = [...READ_ONLY_WORKSPACE_COMMAND_NAMES].sort();
 const SKIPPED_DIRS = new Set([
   ".git",
   "node_modules",
@@ -610,6 +613,30 @@ function buildMariForensicsEnvelope(input: {
     found: input.found ?? true,
     partial: input.partial ?? false,
     ...input.data,
+  };
+}
+
+function summarizeDeclaredLorebookBinding(binding: unknown): Record<string, unknown> | null {
+  if (!binding || typeof binding !== "object") return null;
+  const record = binding as Record<string, unknown>;
+  const selector =
+    record.selector && typeof record.selector === "object" && !Array.isArray(record.selector)
+      ? (record.selector as Record<string, unknown>)
+      : null;
+  return {
+    mode: typeof record.mode === "string" ? record.mode : null,
+    targetTag: typeof record.targetTag === "string" ? record.targetTag : null,
+    targetCategory: typeof record.targetCategory === "string" ? record.targetCategory : null,
+    selector: selector
+      ? {
+          tags: parseStringArray(selector.tags),
+          categories: parseStringArray(selector.categories),
+          includeEmbeddedCharacterBooks: selector.includeEmbeddedCharacterBooks === true,
+          includeCharacterLinkedLorebooks: selector.includeCharacterLinkedLorebooks === true,
+          includeGlobalLorebooks: selector.includeGlobalLorebooks === true,
+        }
+      : null,
+    notes: parseStringArray(record.notes),
   };
 }
 
@@ -2204,7 +2231,14 @@ ${sections.join("\n\n")}
             enableTools: metadata.enableTools === true,
           },
           toolScope: {
-            workspaceInspectionToolsAvailable: [...WORKSPACE_TOOLS],
+            workspaceToolSurface: {
+              readOnlyInspectionAndSearchCommands: READ_ONLY_WORKSPACE_COMMAND_LIST,
+              mutationCapableCommands: [...MUTATION_CAPABLE_WORKSPACE_COMMAND_NAMES],
+            },
+            workspaceToolPolicy: {
+              runtimeForensicsDefault: "prefer_read_only_workspace_commands",
+              note: "Mari workspace commands and chat-generation tool ids are separate surfaces.",
+            },
             activeChatGenerationToolIds: activeToolIds,
             activeChatGenerationToolIdsStatus:
               activeToolIds.length > 0 ? "tool_confirmed" : "no active chat generation tool ids were reported",
@@ -2316,6 +2350,7 @@ ${sections.join("\n\n")}
     const configs = await agentStorage.listEnabled();
     const activeSet = new Set(activeAgentIds);
     const resolvedById = new Map(resolved.map((agent) => [agent.id, agent] as const));
+    const stackManifest = stackDefaults?.stackId === "pecorino-roleplay-stack" ? getPecorinoRoleplayStackManifest() : null;
     const filteredConfigs = configs
       .filter((config) => matchesActiveAgentSelection(activeSet, { id: config.id, type: config.type }))
       .filter((config) => {
@@ -2337,6 +2372,11 @@ ${sections.join("\n\n")}
         const promptTemplate = typeof config.promptTemplate === "string" ? config.promptTemplate : "";
         const selectedByConfigId = activeAgentIds.includes(config.id);
         const selectedByType = activeAgentIds.includes(config.type);
+        const stackNode =
+          stackManifest?.executionPlan
+            .flatMap((phase) => phase.groups)
+            .flatMap((group) => group.nodes)
+            .find((node) => node.kind === "agent" && node.id === config.type) ?? null;
         return {
           id: config.id,
           type: config.type,
@@ -2356,8 +2396,21 @@ ${sections.join("\n\n")}
             available: typeof parsedSettings.resultType === "string" || parsedSettings.includePreGenerationInjections === true,
           },
           lorebookBindings: {
-            lorebookIds: parseStringArray(parsedSettings.lorebookIds),
-            useChatActiveLorebooks: parsedSettings.useChatActiveLorebooks === true,
+            agentConfigLorebookSettings: {
+              lorebookIds: parseStringArray(parsedSettings.lorebookIds),
+              useChatActiveLorebooks: parsedSettings.useChatActiveLorebooks === true,
+            },
+            stackNodeDeclaredLorebookBindings: stackNode
+              ? {
+                  read: summarizeDeclaredLorebookBinding(stackNode.lorebooks?.read),
+                  write: summarizeDeclaredLorebookBinding(stackNode.lorebooks?.write),
+                  resolved: false,
+                  note: "Declared on the seeded stack node only; not a resolved runtime scope.",
+                }
+              : { unavailable: "No stack node declared lorebook binding summary is available for this agent." },
+            resolvedRuntimeLorebookScope: {
+              unavailable: "Resolved runtime lorebook scope is not implemented in this inspector yet.",
+            },
           },
           toolAllowance: {
             enableToolUse: parsedSettings.enableToolUse === true,
@@ -2391,7 +2444,9 @@ ${sections.join("\n\n")}
             phase: "present",
             activation: "present",
             outputMode: "present",
-            lorebookBindings: "present",
+            agentConfigLorebookSettings: "present",
+            stackNodeDeclaredLorebookBindings: stackNode ? "declared_only_not_resolved" : "unavailable",
+            resolvedRuntimeLorebookScope: "unavailable",
             toolAllowance: "present",
             parsedSettings: "present",
             rawSettings: "present",
@@ -2401,6 +2456,7 @@ ${sections.join("\n\n")}
           },
           unavailableFields: {
             decryptedApiKey: "Unavailable from this tool.",
+            resolvedRuntimeLorebookScope: "A stack-to-runtime lorebook scope resolver is not implemented in this pass.",
           },
         };
       }),

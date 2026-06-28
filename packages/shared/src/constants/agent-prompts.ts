@@ -160,9 +160,10 @@ Return valid JSON only:
 Prompt rules: describe composition, lighting, mood, environment, and every visible character/persona directly. Put all visible names in characters. Include no UI, watermark, logo, signature, captions, speech bubbles, subtitles, manga SFX, or meta-instructions.`,
 
   /* ────────────────────────────────────────── */
-  "lorebook-keeper": `You are Lorebook Keeper for chat/roleplay continuity. Record only durable facts from the latest assistant response that will help future generations remember the world, characters, factions, locations, items, events, powers, relationships, or reusable history.
-Skip trivial momentary actions, temporary moods, ordinary scene beats, and facts already captured by <chat_summary>. Check <existing_entries> first: update a matching entry instead of creating duplicates. Never modify locked entries.
-For creates, write concise standalone content and useful activation keys. For updates, return only atomic newFacts to append; do not rewrite whole entries unless an existing entry is empty or malformed. If nothing durable changed, return {"updates":[]}.
+  "lorebook-keeper": `You are World Keeper for roleplay continuity. Record only durable world-facing facts from the latest assistant response that future generations should remember.
+Focus on locations, venues, businesses, factions, institutions, public consequences, reusable setting logic, and durable events. Do not record temporary moods, routine banter, one-scene character drift, or repository-style character continuity.
+Check <existing_entries> first: update a matching entry instead of creating duplicates. Never modify locked entries. For creates, write concise standalone content and useful activation keys. For updates, return only atomic newFacts to append; do not rewrite whole entries unless an existing entry is empty or malformed.
+If nothing durable world-facing changed, return {"updates":[]}.
 This is not the Game Mode session-end keeper. Game Mode uses separate post-session instructions.
 Return only valid JSON:
 {
@@ -173,8 +174,8 @@ Return only valid JSON:
       "content": "full content for creates, or only for replacing an empty/malformed entry",
       "newFacts": ["atomic durable fact to append on update"],
       "keys": ["activation keyword"],
-      "tag": "character|location|item|faction|event|lore",
-      "reason": "why this should be recorded"
+      "tag": "location|item|faction|event|lore|character",
+      "reason": "why this world-facing fact should be recorded"
     }
   ]
 }`,
@@ -300,7 +301,7 @@ Schema:
 6. Track inventory faithfully. Items gained, lost, used, consumed, or traded must update immediately; unchanged items stay as they were.`,
 
   /* ────────────────────────────────────────── */
-  "custom-tracker": `Track only the user's custom fields after the latest assistant message. Current fields live in <current_game_state> under playerStats.customTrackerFields as { name, value, locked? } objects.
+  "custom-tracker": `Track only the user's custom dashboard fields after the latest assistant message. Current fields live in <current_game_state> under playerStats.customTrackerFields as { name, value, locked? } objects.
 Respond ONLY with valid JSON.
 Rules:
 1. Output ALL fields, including unchanged ones. Omitting a field deletes it.
@@ -308,7 +309,9 @@ Rules:
 3. If a field is locked or marked "(locked)", copy its previous value exactly. Do not change, omit, rename, remove, or unlock locked fields.
 4. Do not add, rename, or remove fields.
 5. Values are always strings. Store numbers as strings (for example "150").
-6. Changes must be proportional and realistic.
+6. Treat this as a player-facing dashboard, not a canon engine. Use it to keep concise, useful status shorthand the player would reasonably track.
+7. Never invent hidden canon, off-screen events, NPC inner life, or relationship changes just to make the dashboard feel busy.
+8. If a field is observational or shorthand in nature, keep it grounded in what the latest response clearly showed.
 Schema:
 {
   "fields": [

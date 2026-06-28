@@ -13,6 +13,7 @@ import {
   chatImages,
   oocInfluences,
   conversationNotes,
+  agentConfigs,
   agentRuns,
   agentMemory,
   memoryChunks,
@@ -307,12 +308,51 @@ export function createChatsStorage(db: DB) {
       const timestamp = resolveTimestamps(timestampOverrides);
       const inheritedSchedules =
         input.mode === "conversation" ? await collectFreshConversationSchedules(input.characterIds) : {};
+      
+      // Auto-populate all custom RP agents for roleplay chats
+      let activeAgentIds: string[] = [];
+      if (input.mode === "roleplay") {
+        try {
+          // Get all custom agents, ordered by phase (pre_generation first, then post_processing)
+          const allCustomAgents = await db
+            .select()
+            .from(agentConfigs)
+            .where(
+              inArray(agentConfigs.type, [
+                // Nemo v11.1 agents
+                "custom-world-context-agent-v11",
+                "custom-cast-advisor-v11",
+                "custom-pressure-weaver-v11",
+                "custom-casting-director-v11",
+                "custom-character-scrivener-v11",
+                // v1.6 custom agents
+                "world-state",
+                "character-tracker",
+                "prose-guardian",
+                "knowledge-router",
+                "knowledge-retrieval",
+                "continuity",
+                "editor",
+                "lorebook-keeper",
+                "character-scrivener",
+                "custom-tracker",
+              ])
+            )
+            .orderBy(agentConfigs.phase);
+          activeAgentIds = allCustomAgents.map((agent) => agent.id);
+        } catch (err) {
+          // Silently fail if agents don't exist yet (e.g., during first boot)
+          // activeAgentIds remains empty
+        }
+      }
+      
       const metadata: MetadataPatch = {
         summary: null,
         tags: [],
         enableAgents: true,
+        enableTools: input.mode === "roleplay",
         agentOverrides: {},
-        activeAgentIds: [],
+        activeAgentIds,
         activeToolIds: [],
       };
       if (hasConversationSchedules(inheritedSchedules)) {
@@ -500,6 +540,7 @@ export function createChatsStorage(db: DB) {
       id: string,
       updater: (
         current: MetadataPatch,
+        currentCharacterIds: string[],
       ) =>
         | { metadata: MetadataPatch; characterIds: string[] }
         | Promise<{ metadata: MetadataPatch; characterIds: string[] }>,
@@ -510,7 +551,8 @@ export function createChatsStorage(db: DB) {
         if (!existing) return null;
 
         const current = parseMetadata(existing.metadata);
-        const { metadata: patch, characterIds } = await updater({ ...current });
+        const currentCharacterIds = parseCharacterIds(existing.characterIds);
+        const { metadata: patch, characterIds } = await updater({ ...current }, currentCharacterIds);
         const merged = mergeMetadataPatch(current, patch);
 
         await db

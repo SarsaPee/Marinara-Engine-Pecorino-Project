@@ -17,6 +17,7 @@ import type { AgentContext, AgentResult, LorebookEntry } from "@marinara-engine/
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { executeAgent, type AgentExecConfig } from "./agent-executor.js";
 import { logger } from "../../lib/logger.js";
+import { parseTurnTagPacketFromAgentContext } from "./turn-tag-packet.js";
 import { scanForActivatedEntries, type ScanMessage, type ScanOptions } from "../lorebook/keyword-scanner.js";
 import {
   semanticShortlistLorebookEntries,
@@ -159,6 +160,59 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return Math.max(1, Math.trunc(numeric));
 }
 
+function normalizeLookupTerm(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function entryMatchesExactTerm(entry: LorebookEntry, term: string): boolean {
+  const normalizedTerm = normalizeLookupTerm(term);
+  if (!normalizedTerm) return false;
+
+  const haystacks = [
+    entry.name,
+    ...(Array.isArray(entry.keys) ? entry.keys : []),
+    entry.description ?? "",
+    entry.content ?? "",
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map(normalizeLookupTerm);
+
+  return haystacks.some((haystack) => haystack.includes(normalizedTerm));
+}
+
+function filterExactFirstCandidates(entries: LorebookEntry[], context: AgentContext): LorebookEntry[] | null {
+  const packet = parseTurnTagPacketFromAgentContext(context);
+  const mode = packet?.retrieval_policy?.mode;
+  if (mode !== "exact_first" && mode !== "framework_lens") return null;
+
+  const exactTerms = Array.isArray(packet?.retrieval_policy?.exact_terms)
+    ? packet!.retrieval_policy!.exact_terms!.filter((term): term is string => typeof term === "string" && term.trim().length > 0)
+    : [];
+  const aliases = Array.isArray(packet?.retrieval_policy?.aliases)
+    ? packet!.retrieval_policy!.aliases!.filter((term): term is string => typeof term === "string" && term.trim().length > 0)
+    : [];
+  const orderedTerms = [...exactTerms, ...aliases];
+  if (orderedTerms.length === 0) return [];
+
+  const maxEntries = normalizePositiveInteger(packet?.retrieval_policy?.max_entries, mode === "framework_lens" ? 2 : 3);
+  const seen = new Set<string>();
+  const matched: LorebookEntry[] = [];
+  for (const term of orderedTerms) {
+    for (const entry of entries) {
+      if (seen.has(entry.id)) continue;
+      if (!entryMatchesExactTerm(entry, term)) continue;
+      seen.add(entry.id);
+      matched.push(entry);
+      if (matched.length >= maxEntries) return matched;
+    }
+  }
+  return matched;
+}
+
 export function buildKnowledgeRouterQuery(context: AgentContext): string {
   const parts = context.recentMessages
     .slice(-10)
@@ -204,6 +258,10 @@ export async function prepareKnowledgeRouterCandidates(
   options: KnowledgeRouterCandidateOptions = {},
 ): Promise<LorebookEntry[]> {
   if (entries.length === 0) return [];
+  const exactFirstCandidates = filterExactFirstCandidates(entries, context);
+  if (exactFirstCandidates) {
+    return exactFirstCandidates;
+  }
   const scanMessages =
     options.scanMessages ??
     context.recentMessages.map((message) => ({

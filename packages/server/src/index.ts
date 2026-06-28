@@ -9,6 +9,8 @@ import { getHost, getPort, getServerProtocol, loadTlsOptions, logStorageDiagnost
 import { logCsrfTrustSummary } from "./middleware/csrf-protection.js";
 import { startEnvWatcher } from "./config/env-watcher.js";
 import { migrateTaskbarShortcuts } from "./services/setup/taskbar-shortcut-migration.js";
+import { ensureDefaultRoleplayAgents } from "./services/setup/default-roleplay-agents.js";
+import { applyCustomAgentOverrides } from "./services/setup/import-custom-agent-overrides.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
 
 function isAddressInUseError(err: unknown): err is NodeJS.ErrnoException {
@@ -38,6 +40,8 @@ async function main() {
   const tls = loadTlsOptions();
   logStorageDiagnostics();
   const app = await buildApp(tls ?? undefined);
+  await ensureDefaultRoleplayAgents(app.db);
+  await applyCustomAgentOverrides(app.db);
   const envWatcher = startEnvWatcher();
   const protocol = tls ? "https" : getServerProtocol();
   const port = getPort();

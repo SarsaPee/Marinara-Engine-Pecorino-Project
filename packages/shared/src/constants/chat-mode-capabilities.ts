@@ -86,10 +86,14 @@ export const ROLEPLAY_AGENT_PICKER_HIDDEN_IDS = [] as const;
 export const CONVERSATION_AGENT_IDS = [] as const;
 
 export const ROLEPLAY_DEFAULT_AGENT_IDS = [
-  "world-state",
-  "prose-guardian",
-  "continuity",
-  "expression",
+  "knowledge-router",
+  "custom-world-context-agent-v11",
+  "custom-cast-advisor-v11",
+  "custom-pressure-weaver-v11",
+  "custom-casting-director-v11",
+  "lorebook-keeper",
+  "custom-character-scrivener-v11",
+  "custom-tracker",
 ] as const;
 
 export const VISUAL_NOVEL_DEFAULT_AGENT_IDS = [

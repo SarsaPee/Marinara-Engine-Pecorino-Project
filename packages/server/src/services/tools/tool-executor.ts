@@ -56,6 +56,25 @@ export type ReplaceChatMessageContentFn = (input: {
   reason?: string;
 }) => Promise<Record<string, unknown>>;
 
+export type AddChatCharacterFn = (input: {
+  characterId?: string;
+  characterName?: string;
+  reason?: string;
+}) => Promise<Record<string, unknown>>;
+
+export type RemoveChatCharacterFn = (input: {
+  characterId?: string;
+  characterName?: string;
+  reason?: string;
+}) => Promise<Record<string, unknown>>;
+
+export type SetChatCharacterActiveFn = (input: {
+  characterId?: string;
+  characterName?: string;
+  active: boolean;
+  reason?: string;
+}) => Promise<Record<string, unknown>>;
+
 /** Spotify API credentials injected from the route layer. */
 export interface SpotifyCredentials {
   accessToken: string;
@@ -169,6 +188,9 @@ export interface ToolExecutionContext {
   searchLorebook?: LorebookSearchFn;
   saveLorebookEntry?: SaveLorebookEntryFn;
   replaceChatMessageContent?: ReplaceChatMessageContentFn;
+  addChatCharacter?: AddChatCharacterFn;
+  removeChatCharacter?: RemoveChatCharacterFn;
+  setChatCharacterActive?: SetChatCharacterActiveFn;
   spotify?: SpotifyCredentials;
   spotifyRepeatAfterPlay?: "off" | "track" | "context";
 }
@@ -240,6 +262,12 @@ async function executeSingleTool(
       return readChatVariable(args, context?.chatMeta);
     case "write_chat_variable":
       return writeChatVariable(args, context);
+    case "add_chat_character":
+      return addChatCharacter(args, context?.addChatCharacter);
+    case "remove_chat_character":
+      return removeChatCharacter(args, context?.removeChatCharacter);
+    case "set_chat_character_active":
+      return setChatCharacterActive(args, context?.setChatCharacterActive);
     case "spotify_get_current_playback":
       return spotifyGetCurrentPlayback(args, context?.spotify);
     case "spotify_get_playlists":
@@ -453,6 +481,17 @@ function normalizeChatVariableKey(args: Record<string, unknown>): { key: string 
   return { key };
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeRequiredBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === "true" || value === "1" || value === 1) return true;
+  if (value === "false" || value === "0" || value === 0) return false;
+  return null;
+}
+
 function normalizeAgentVariables(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const variables: Record<string, string> = {};
@@ -461,6 +500,62 @@ function normalizeAgentVariables(value: unknown): Record<string, string> {
     variables[key] = rawValue;
   }
   return variables;
+}
+
+async function addChatCharacter(
+  args: Record<string, unknown>,
+  apply?: AddChatCharacterFn,
+): Promise<Record<string, unknown>> {
+  if (!apply) return { error: "add_chat_character is not available in this context." };
+  const characterName = normalizeOptionalString(args.characterName);
+  const characterId = normalizeOptionalString(args.characterId);
+  if (!characterName && !characterId) {
+    return { error: "Provide characterName or characterId." };
+  }
+  return apply({
+    characterName,
+    characterId,
+    reason: normalizeOptionalString(args.reason),
+  });
+}
+
+async function removeChatCharacter(
+  args: Record<string, unknown>,
+  apply?: RemoveChatCharacterFn,
+): Promise<Record<string, unknown>> {
+  if (!apply) return { error: "remove_chat_character is not available in this context." };
+  const characterName = normalizeOptionalString(args.characterName);
+  const characterId = normalizeOptionalString(args.characterId);
+  if (!characterName && !characterId) {
+    return { error: "Provide characterName or characterId." };
+  }
+  return apply({
+    characterName,
+    characterId,
+    reason: normalizeOptionalString(args.reason),
+  });
+}
+
+async function setChatCharacterActive(
+  args: Record<string, unknown>,
+  apply?: SetChatCharacterActiveFn,
+): Promise<Record<string, unknown>> {
+  if (!apply) return { error: "set_chat_character_active is not available in this context." };
+  const characterName = normalizeOptionalString(args.characterName);
+  const characterId = normalizeOptionalString(args.characterId);
+  const active = normalizeRequiredBoolean(args.active);
+  if (!characterName && !characterId) {
+    return { error: "Provide characterName or characterId." };
+  }
+  if (active === null) {
+    return { error: "active must be a boolean." };
+  }
+  return apply({
+    characterName,
+    characterId,
+    active,
+    reason: normalizeOptionalString(args.reason),
+  });
 }
 
 function readChatVariable(args: Record<string, unknown>, chatMeta?: Record<string, unknown>): Record<string, unknown> {

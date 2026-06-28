@@ -117,8 +117,7 @@ function getManualUpdateHint(installType: InstallType, platform: ServerPlatform)
     return "Pull the published container image and restart the container. Versioned tags are published from vX.Y.Z release tags.";
   }
   if (installType === "git") {
-    const launcher = getGitLauncherCommand(platform);
-    return `Relaunch Marinara with ${launcher} to let the platform launcher fetch origin/main, install dependencies, rebuild, and start the new version.`;
+    return "Fetch and fast-forward the git checkout manually, then reinstall dependencies, rebuild, and restart Marinara.";
   }
   return "Download the release asset or update the host install manually, then restart Marinara.";
 }
@@ -555,7 +554,8 @@ export async function updatesRoutes(app: FastifyInstance) {
     if (!isUpdatesApplyEnabled()) {
       return reply.status(403).send({
         error: "Auto-update apply is disabled for this install",
-        message: `Update manually with: ${getGitLauncherCommand(serverPlatform)}. Advanced git installs can enable server-side update application with UPDATES_APPLY_ENABLED=true.`,
+        message:
+          "Update manually with git fetch, git merge --ff-only origin/main, corepack pnpm install, and corepack pnpm build. Advanced git installs can enable server-side update application with UPDATES_APPLY_ENABLED=true.",
         installType: "git",
         serverPlatform,
         applyUnavailableReason: "disabled",

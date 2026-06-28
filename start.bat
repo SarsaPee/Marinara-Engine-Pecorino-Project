@@ -97,7 +97,7 @@ goto :eof
 
 :after_restore_helper
 
-:: Auto-update from Git
+:: Update check from Git (no auto-apply)
 if not exist ".git" goto :skip_update
 echo  [..] Checking for updates...
 for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set "OLD_HEAD=%%i"
@@ -111,57 +111,14 @@ if /I "!OLD_HEAD!"=="!TARGET_HEAD!" (
     echo  [OK] Already up to date
     goto :skip_update
 )
-:: Drop known-safe untracked files that older installer versions placed in
-:: $INSTDIR but are now also tracked in the repo. Without this, git merge
-:: --ff-only refuses to overwrite them and the auto-update silently fails.
-:: The repo copies are byte-identical to what the installer wrote, so this
-:: is non-destructive — git restores them as tracked files after the merge.
-if exist "app-icon.ico" (
-    git ls-files --error-unmatch "app-icon.ico" >nul 2>&1
-    if errorlevel 1 del /q "app-icon.ico" >nul 2>&1
-)
-
-:: Stash any tracked local changes so the update doesn't fail
-set "STASHED=0"
-set "STASH_REF="
-set "DIRTY=0"
-git diff --quiet >nul 2>&1
-if errorlevel 1 set "DIRTY=1"
-git diff --cached --quiet >nul 2>&1
-if errorlevel 1 set "DIRTY=1"
-if "!DIRTY!"=="1" (
-    git stash push -q -m "auto-stash before update" >nul 2>&1 && set "STASHED=1"
-    if "!STASHED!"=="1" for /f "tokens=*" %%i in ('git stash list -1 --format^=%%gd 2^>nul') do set "STASH_REF=%%i"
-)
-set "CURRENT_BRANCH="
-for /f "tokens=*" %%i in ('git branch --show-current 2^>nul') do set "CURRENT_BRANCH=%%i"
-set "UPDATED_TO_TARGET=0"
-if "!CURRENT_BRANCH!"=="" (
-    git checkout --detach "!TARGET_HEAD!" >nul 2>&1 && set "UPDATED_TO_TARGET=1"
-) else (
-    git merge --ff-only origin/main >nul 2>&1 && set "UPDATED_TO_TARGET=1"
-)
-if not "!UPDATED_TO_TARGET!"=="1" (
-    if "!STASHED!"=="1" call :restore_stashed_changes
-    echo  [WARN] Could not update to origin/main. Continuing with current version.
-    goto :skip_update
-)
-for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set "NEW_HEAD=%%i"
-if /I not "!NEW_HEAD!"=="!TARGET_HEAD!" (
-    if "!STASHED!"=="1" call :restore_stashed_changes
-    echo  [WARN] Update did not land on origin/main. Continuing with current version.
-    goto :skip_update
-)
-if "!STASHED!"=="1" call :restore_stashed_changes
-echo  [OK] Updated to latest version
-echo  [..] Reinstalling dependencies...
-call :run_pnpm install
-if exist "packages\shared\dist" rmdir /s /q "packages\shared\dist"
-if exist "packages\server\dist" rmdir /s /q "packages\server\dist"
-if exist "packages\client\dist" rmdir /s /q "packages\client\dist"
-del /q "packages\shared\tsconfig.tsbuildinfo" 2>nul
-del /q "packages\server\tsconfig.tsbuildinfo" 2>nul
-del /q "packages\client\tsconfig.tsbuildinfo" 2>nul
+echo  [WARN] Update available:
+git log -1 --format^=  %%h %%s origin/main 2>nul
+echo         Local version is unchanged.
+echo         Update manually when ready:
+echo         git fetch origin +refs/heads/main:refs/remotes/origin/main
+echo         git merge --ff-only origin/main
+echo         corepack pnpm install
+echo         corepack pnpm build
 
 :skip_update
 echo  [OK] Node.js found:

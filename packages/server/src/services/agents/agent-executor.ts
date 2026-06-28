@@ -1248,7 +1248,7 @@ function buildStandardAgentMessages(config: AgentExecConfig, template: string, c
   systemParts.push(`Fulfill the requested task here and return the output in the format specified:`);
   systemParts.push(template);
   systemParts.push(`</agents>`);
-  const extras = buildAgentExtras(context, [config.type]);
+  const extras = buildAgentExtras(context, [config.type], config);
   if (extras) {
     systemParts.push(``);
     systemParts.push(extras);
@@ -1894,7 +1894,11 @@ function buildAvailableSpritesBlock(context: AgentContext): string {
  * Build agent-specific context blocks (sprites, backgrounds, source material, etc.)
  * that go into the system message after lore.
  */
-function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): string {
+function buildAgentExtras(
+  context: AgentContext,
+  agentTypes: string[] = [],
+  config?: Pick<AgentExecConfig, "id" | "type">,
+): string {
   const parts: string[] = [];
 
   // Card Evolution Auditor needs the FULL character card (not just description)
@@ -2026,8 +2030,22 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`</custom_music_dj_constraints>`);
   }
 
-  if (agentTypes.includes("lorebook-keeper") && context.memory._existingLorebookEntries) {
-    const rawEntries = context.memory._existingLorebookEntries as Array<
+  const existingEntriesByAgent =
+    context.memory._existingLorebookEntriesByAgent &&
+    typeof context.memory._existingLorebookEntriesByAgent === "object" &&
+    !Array.isArray(context.memory._existingLorebookEntriesByAgent)
+      ? (context.memory._existingLorebookEntriesByAgent as Record<string, unknown>)
+      : null;
+  const agentSpecificExistingEntries =
+    (config?.id && existingEntriesByAgent?.[config.id]) ??
+    (config?.type && existingEntriesByAgent?.[config.type]) ??
+    context.memory._existingLorebookEntries;
+
+  if (
+    (agentTypes.includes("lorebook-keeper") || agentTypes.some((type) => type.includes("character-scrivener"))) &&
+    agentSpecificExistingEntries
+  ) {
+    const rawEntries = agentSpecificExistingEntries as Array<
       string | { id?: string; name?: string; content?: string; keys?: string[]; locked?: boolean }
     >;
     const entries = rawEntries
@@ -2054,6 +2072,12 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
       parts.push(entries.join("\n"));
       parts.push(`</existing_entries>`);
     }
+  }
+
+  if (context.memory._turnTagPacketRaw) {
+    parts.push(`<turn_tag_packet>`);
+    parts.push(String(context.memory._turnTagPacketRaw));
+    parts.push(`</turn_tag_packet>`);
   }
 
   if (context.chatSummary) {

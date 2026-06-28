@@ -447,6 +447,19 @@ export async function resolveAgentPipelineAgents({
     );
   }
 
+  if (hasPerChatAgentList) {
+    const orderedIds = Array.from(perChatAgentSet);
+    const orderByType = new Map(orderedIds.map((id, index) => [id, index] as const));
+    resolvedAgents.sort((left, right) => {
+      const leftOrder = orderByType.get(left.type);
+      const rightOrder = orderByType.get(right.type);
+      if (leftOrder != null && rightOrder != null) return leftOrder - rightOrder;
+      if (leftOrder != null) return -1;
+      if (rightOrder != null) return 1;
+      return 0;
+    });
+  }
+
   logger.info(
     "[generate] Resolved %d agents for chat %s (enableAgents=%s, perChatList=%s, activeIds=[%s]): %s",
     resolvedAgents.length,

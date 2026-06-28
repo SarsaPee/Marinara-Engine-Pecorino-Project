@@ -362,19 +362,6 @@ export async function persistLorebookKeeperUpdates(args: {
   const { lorebooksStore, chatId, chatName, preferredTargetLorebookId, writableLorebookIds, updates } = args;
 
   let targetLorebookId = preferredTargetLorebookId ?? writableLorebookIds?.[0] ?? null;
-  if (!targetLorebookId) {
-    const created = await lorebooksStore.create({
-      name: `Auto-generated (${chatName || chatId})`,
-      description: "Automatically created by the Lorebook Keeper agent",
-      category: "uncategorized",
-      chatId,
-      enabled: true,
-      generatedBy: "agent",
-      sourceAgentId: "lorebook-keeper",
-    });
-    targetLorebookId = (created as { id?: string } | null)?.id ?? null;
-  }
-
   if (!targetLorebookId) return null;
 
   const existingEntries = (await lorebooksStore.listEntries(targetLorebookId)) as unknown as Array<{

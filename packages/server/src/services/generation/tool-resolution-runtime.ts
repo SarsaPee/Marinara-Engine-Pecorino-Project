@@ -42,12 +42,22 @@ type CustomToolsStore = {
 };
 
 type ChatsStore = {
+  getById(id: string): Promise<{ characterIds?: unknown; metadata?: unknown } | null>;
   getMessage(id: string): Promise<{ id: string; chatId: string; role: string } | null>;
   updateMessageContent(id: string, content: string): Promise<unknown>;
   patchMetadata(
     chatId: string,
     patcher: (currentMeta: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>,
   ): Promise<{ metadata?: unknown } | null>;
+  patchMetadataWithCharacterIds(
+    chatId: string,
+    updater: (
+      currentMeta: Record<string, unknown>,
+      currentCharacterIds: string[],
+    ) =>
+      | { metadata: Record<string, unknown>; characterIds: string[] }
+      | Promise<{ metadata: Record<string, unknown>; characterIds: string[] }>,
+  ): Promise<{ metadata?: unknown; characterIds?: unknown } | null>;
 };
 
 type LorebooksStore = {
@@ -56,6 +66,10 @@ type LorebooksStore = {
   listEntries(lorebookId: string): Promise<any[]>;
   createEntry(entry: Record<string, unknown>): Promise<any>;
   updateEntry(id: string, entry: Record<string, unknown>): Promise<any>;
+};
+
+type CharactersStore = {
+  list(): Promise<Array<{ id: string; data: string }>>;
 };
 
 type AgentsStore = unknown;
@@ -68,6 +82,7 @@ type ResolveGenerationToolsArgs = {
   agentsStore: AgentsStore;
   customToolsStore: CustomToolsStore;
   lorebooksStore: LorebooksStore;
+  chars: CharactersStore;
   resolvedAgents: ResolvedAgent[];
   enabledConfigs: any[];
   promptCharacterIds: string[];
@@ -95,8 +110,33 @@ const AGENT_ONLY_TOOL_NAMES = new Set([
   "append_chat_summary",
   "read_chat_variable",
   "write_chat_variable",
+  "add_chat_character",
+  "remove_chat_character",
+  "set_chat_character_active",
   "edit_chat_message",
 ]);
+
+function parseCharacterIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseCharacterNameFromData(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return typeof parsed.name === "string" && parsed.name.trim().length > 0 ? parsed.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseExtra(extra: unknown): Record<string, unknown> {
   if (!extra) return {};
@@ -503,6 +543,7 @@ export async function resolveGenerationTools({
   agentsStore,
   customToolsStore,
   lorebooksStore,
+  chars,
   resolvedAgents,
   enabledConfigs,
   promptCharacterIds,
@@ -605,6 +646,185 @@ export async function resolveGenerationTools({
       }));
   };
 
+  let cachedCharacterIndex:
+    | Map<string, { id: string; name: string }>
+    | null = null;
+
+  const loadCharacterIndex = async () => {
+    if (cachedCharacterIndex) return cachedCharacterIndex;
+    const rows = await chars.list();
+    const index = new Map<string, { id: string; name: string }>();
+    for (const row of rows) {
+      const name = parseCharacterNameFromData(row.data);
+      if (!name) continue;
+      index.set(row.id, { id: row.id, name });
+      index.set(name.toLowerCase(), { id: row.id, name });
+    }
+    cachedCharacterIndex = index;
+    return index;
+  };
+
+  const resolveCharacterRef = async (input: { characterId?: string; characterName?: string }) => {
+    const exactId = typeof input.characterId === "string" && input.characterId.trim() ? input.characterId.trim() : null;
+    const exactName = typeof input.characterName === "string" && input.characterName.trim()
+      ? input.characterName.trim()
+      : null;
+    const index = await loadCharacterIndex();
+    if (exactId) {
+      const byId = index.get(exactId);
+      if (byId) return byId;
+    }
+    if (exactName) {
+      const byName = index.get(exactName.toLowerCase());
+      if (byName) return byName;
+    }
+    return null;
+  };
+
+  const addChatCharacter = async (input: {
+    characterId?: string;
+    characterName?: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> => {
+    const resolved = await resolveCharacterRef(input);
+    if (!resolved) {
+      return {
+        error: "Character not found. Use an exact canonical character name or id.",
+        characterId: input.characterId ?? null,
+        characterName: input.characterName ?? null,
+      };
+    }
+    let applied = false;
+    let active = true;
+    await chats.patchMetadataWithCharacterIds(chatId, async (currentMeta, currentCharacterIds) => {
+      const nextCharacterIds = [...currentCharacterIds];
+      if (!nextCharacterIds.includes(resolved.id)) {
+        nextCharacterIds.push(resolved.id);
+        applied = true;
+      }
+      const inactiveSet = new Set(
+        Array.isArray(currentMeta.inactiveCharacterIds)
+          ? currentMeta.inactiveCharacterIds.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+      if (inactiveSet.delete(resolved.id)) {
+        applied = true;
+      }
+      active = !inactiveSet.has(resolved.id);
+      return {
+        metadata: {
+          inactiveCharacterIds: Array.from(inactiveSet),
+        },
+        characterIds: nextCharacterIds,
+      };
+    });
+    return {
+      applied,
+      action: applied ? "added" : "already_present",
+      characterId: resolved.id,
+      characterName: resolved.name,
+      active,
+      reason: input.reason ?? null,
+    };
+  };
+
+  const removeChatCharacter = async (input: {
+    characterId?: string;
+    characterName?: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> => {
+    const resolved = await resolveCharacterRef(input);
+    if (!resolved) {
+      return {
+        error: "Character not found. Use an exact canonical character name or id.",
+        characterId: input.characterId ?? null,
+        characterName: input.characterName ?? null,
+      };
+    }
+    let applied = false;
+    await chats.patchMetadataWithCharacterIds(chatId, async (currentMeta, currentCharacterIds) => {
+      const nextCharacterIds = currentCharacterIds.filter((id) => id !== resolved.id);
+      applied = nextCharacterIds.length !== currentCharacterIds.length;
+      const inactiveSet = new Set(
+        Array.isArray(currentMeta.inactiveCharacterIds)
+          ? currentMeta.inactiveCharacterIds.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+      inactiveSet.delete(resolved.id);
+      return {
+        metadata: {
+          inactiveCharacterIds: Array.from(inactiveSet),
+        },
+        characterIds: nextCharacterIds,
+      };
+    });
+    return {
+      applied,
+      action: applied ? "removed" : "not_present",
+      characterId: resolved.id,
+      characterName: resolved.name,
+      reason: input.reason ?? null,
+    };
+  };
+
+  const setChatCharacterActive = async (input: {
+    characterId?: string;
+    characterName?: string;
+    active: boolean;
+    reason?: string;
+  }): Promise<Record<string, unknown>> => {
+    const resolved = await resolveCharacterRef(input);
+    if (!resolved) {
+      return {
+        error: "Character not found. Use an exact canonical character name or id.",
+        characterId: input.characterId ?? null,
+        characterName: input.characterName ?? null,
+      };
+    }
+    let present = false;
+    let applied = false;
+    let inactive = false;
+    await chats.patchMetadataWithCharacterIds(chatId, async (currentMeta, currentCharacterIds) => {
+      present = currentCharacterIds.includes(resolved.id);
+      if (!present) {
+        return { metadata: {}, characterIds: currentCharacterIds };
+      }
+      const inactiveSet = new Set(
+        Array.isArray(currentMeta.inactiveCharacterIds)
+          ? currentMeta.inactiveCharacterIds.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+      const wasInactive = inactiveSet.has(resolved.id);
+      if (input.active) {
+        inactiveSet.delete(resolved.id);
+      } else {
+        inactiveSet.add(resolved.id);
+      }
+      inactive = inactiveSet.has(resolved.id);
+      applied = wasInactive !== inactive;
+      return {
+        metadata: { inactiveCharacterIds: Array.from(inactiveSet) },
+        characterIds: currentCharacterIds,
+      };
+    });
+    if (!present) {
+      return {
+        error: "Character is not in this chat. Add them first before changing active state.",
+        characterId: resolved.id,
+        characterName: resolved.name,
+        requestedActive: input.active,
+      };
+    }
+    return {
+      applied,
+      action: input.active ? "activated" : "deactivated",
+      characterId: resolved.id,
+      characterName: resolved.name,
+      active: !inactive,
+      reason: input.reason ?? null,
+    };
+  };
+
   const updateChatMetadataForTools = async (patchOrUpdater: MetadataPatchInput): Promise<MetadataPatch> => {
     let emittedPatch: Record<string, unknown> = {};
     const updatedChat = await chats.patchMetadata(chatId, async (currentMeta) => {
@@ -666,6 +886,9 @@ export async function resolveGenerationTools({
     searchLorebook: searchLorebookForTools,
     chatMeta: chatMetadata,
     onUpdateMetadata: updateChatMetadataForTools,
+    addChatCharacter,
+    removeChatCharacter,
+    setChatCharacterActive,
   };
 
   for (const agent of resolvedAgents) {

@@ -171,6 +171,11 @@ import {
 import { MARI_ASSISTANT_PROMPT } from "../db/seed-mari.js";
 import { executeKnowledgeRetrieval } from "../services/agents/knowledge-retrieval.js";
 import { executeKnowledgeRouter } from "../services/agents/knowledge-router.js";
+import {
+  buildDeterministicTurnTagPacket,
+  normalizeAgentVariables,
+  shouldRunAgentForTurnTagPacket,
+} from "../services/agents/turn-tag-packet.js";
 import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
 import { chats as chatsTable } from "../db/schema/index.js";
@@ -4619,6 +4624,36 @@ export async function generateRoutes(app: FastifyInstance) {
           agentContext.memory._personaAvatarPath =
             persona && typeof persona.avatarPath === "string" ? persona.avatarPath : null;
         }
+        const derivedTurnTagPacket =
+          chatMode === "roleplay"
+            ? buildDeterministicTurnTagPacket({
+                chatMode,
+                latestUserContent: currentUserInputContent() ?? input.userMessage ?? "",
+                recentMessages: recentMsgs,
+                chatSummary: activeChatSummary,
+                sceneStatus: typeof chatMeta.sceneStatus === "string" ? chatMeta.sceneStatus : null,
+              })
+            : null;
+        if (derivedTurnTagPacket) {
+          const derivedTurnTagPacketRaw = JSON.stringify(derivedTurnTagPacket);
+          const nextAgentVariables = {
+            ...normalizeAgentVariables(chatMeta.agentVariables),
+            turn_tag_packet_v1: derivedTurnTagPacketRaw,
+          };
+          chatMeta.agentVariables = nextAgentVariables;
+          agentContext.memory._turnTagPacket = derivedTurnTagPacket;
+          agentContext.memory._turnTagPacketRaw = derivedTurnTagPacketRaw;
+          agentContext.memory._chatVariables = nextAgentVariables;
+        }
+        if (derivedTurnTagPacket) {
+          for (let index = resolvedAgents.length - 1; index >= 0; index--) {
+            const agent = resolvedAgents[index]!;
+            if (!shouldRunAgentForTurnTagPacket(agent.type, derivedTurnTagPacket)) {
+              logger.debug("[agents] Skipping %s due to turn_tag_packet_v1 addressing", agent.type);
+              resolvedAgents.splice(index, 1);
+            }
+          }
+        }
         const getLatestUserExpressionSource = () =>
           (
             [...agentContext.recentMessages]
@@ -4736,6 +4771,32 @@ export async function generateRoutes(app: FastifyInstance) {
               /* non-critical */
             }
           }
+        }
+        const customLorebookWriterEntriesByAgent: Record<string, unknown> = {};
+        for (const agent of resolvedAgents) {
+          if (agent.type === "lorebook-keeper") continue;
+          if (resolveAgentResultType(agent) !== "lorebook_update") continue;
+          const writableLorebookIds = resolveCustomWritableLorebookIds(agent.settings);
+          const targetLorebookId = writableLorebookIds?.[0] ?? null;
+          if (!targetLorebookId) continue;
+          try {
+            const existingEntries = await loadLorebookKeeperExistingEntries(lorebooksStore, targetLorebookId);
+            if (existingEntries.length === 0) continue;
+            customLorebookWriterEntriesByAgent[agent.id] = existingEntries;
+            customLorebookWriterEntriesByAgent[agent.type] = existingEntries;
+          } catch {
+            /* non-critical */
+          }
+        }
+        if (Object.keys(customLorebookWriterEntriesByAgent).length > 0) {
+          agentContext.memory._existingLorebookEntriesByAgent = {
+            ...(agentContext.memory._existingLorebookEntriesByAgent &&
+            typeof agentContext.memory._existingLorebookEntriesByAgent === "object" &&
+            !Array.isArray(agentContext.memory._existingLorebookEntriesByAgent)
+              ? (agentContext.memory._existingLorebookEntriesByAgent as Record<string, unknown>)
+              : {}),
+            ...customLorebookWriterEntriesByAgent,
+          };
         }
 
         // If the expression agent is enabled, load available sprite expressions per character
@@ -5196,6 +5257,7 @@ export async function generateRoutes(app: FastifyInstance) {
           agentsStore,
           customToolsStore,
           lorebooksStore,
+          chars,
           resolvedAgents,
           enabledConfigs,
           promptCharacterIds,

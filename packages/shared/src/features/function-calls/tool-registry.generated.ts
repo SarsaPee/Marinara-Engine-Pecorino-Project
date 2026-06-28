@@ -12,6 +12,9 @@ import { readChatSummaryToolManifest } from "./tools/read-chat-summary/manifest.
 import { appendChatSummaryToolManifest } from "./tools/append-chat-summary/manifest.js";
 import { readChatVariableToolManifest } from "./tools/read-chat-variable/manifest.js";
 import { writeChatVariableToolManifest } from "./tools/write-chat-variable/manifest.js";
+import { addChatCharacterToolManifest } from "./tools/add-chat-character/manifest.js";
+import { removeChatCharacterToolManifest } from "./tools/remove-chat-character/manifest.js";
+import { setChatCharacterActiveToolManifest } from "./tools/set-chat-character-active/manifest.js";
 import { spotifyGetCurrentPlaybackToolManifest } from "./tools/spotify-get-current-playback/manifest.js";
 import { spotifyGetPlaylistsToolManifest } from "./tools/spotify-get-playlists/manifest.js";
 import { spotifyGetPlaylistTracksToolManifest } from "./tools/spotify-get-playlist-tracks/manifest.js";
@@ -31,6 +34,9 @@ export const BUILT_IN_TOOL_MANIFESTS: readonly ToolDefinition[] = [
   appendChatSummaryToolManifest,
   readChatVariableToolManifest,
   writeChatVariableToolManifest,
+  addChatCharacterToolManifest,
+  removeChatCharacterToolManifest,
+  setChatCharacterActiveToolManifest,
   spotifyGetCurrentPlaybackToolManifest,
   spotifyGetPlaylistsToolManifest,
   spotifyGetPlaylistTracksToolManifest,

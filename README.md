@@ -169,8 +169,11 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 
 ## Documentation
 
+Start with the [Documentation Hub](docs/README.md) if you want one central place to browse guides, engineering notes, contributor docs, and Pecorino-specific workflow.
+
 | Document                                             | Description                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
+| [docs/README.md](docs/README.md)                     | Central documentation index and navigation hub                  |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
 | [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
@@ -181,6 +184,7 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | [docs/PROFESSOR_MARI.md](docs/PROFESSOR_MARI.md)     | Built-in assistant capabilities, limits, and safety notes       |
 | [docs/FRONTEND.md](docs/FRONTEND.md)                 | Frontend architecture, components, hooks, and API reference     |
 | [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) | Code ownership map and module-boundary refactor groundwork      |
+| [docs/pecorino/README.md](docs/pecorino/README.md)   | Pecorino fork workflow, repo layout, and local runtime notes    |
 | [android/README.md](android/README.md)               | Android Termux bootstrap + WebView shell guide                  |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                   | Contributor workflow, validation, versioning, and release steps |
 | [CHANGELOG.md](CHANGELOG.md)                         | Release notes                                                   |

@@ -6,6 +6,7 @@ import {
   PECORINO_ROLEPLAY_STACK_ID,
   ROLEPLAY_DEFAULT_AGENT_IDS,
 } from "@marinara-engine/shared";
+import { resolveAgentDefaultsFromAssignmentConfig } from "../facades/resolve-agent-defaults-from-assignment-config.js";
 import { resolveModeDefaultAgentStack } from "../facades/resolve-mode-default-agent-stack.js";
 import { resolveRoleplayDefaultAgentIds } from "../bridges/resolve-roleplay-default-agent-ids.js";
 
@@ -75,6 +76,63 @@ test("mode-default facade returns Pecorino defaults when provided as roleplay ch
 test("mode-default facade returns none for non-roleplay mode with no assignment", () => {
   const result = resolveModeDefaultAgentStack({
     mode: "conversation",
+  });
+
+  assert.equal(result.mode, "conversation");
+  assert.equal(result.source, "none");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, []);
+});
+
+test("assignment config facade falls back to legacy roleplay defaults when config is empty", () => {
+  const result = resolveAgentDefaultsFromAssignmentConfig({
+    mode: "roleplay",
+    assignmentConfig: {},
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "legacy_fallback");
+  assert.equal(result.stackId, null);
+  assert.deepEqual(result.agentIds, [...ROLEPLAY_DEFAULT_AGENT_IDS]);
+});
+
+test("assignment config facade uses roleplay mode default when configured", () => {
+  const result = resolveAgentDefaultsFromAssignmentConfig({
+    mode: "roleplay",
+    assignmentConfig: {
+      modeDefaultStackIds: {
+        roleplay: PECORINO_ROLEPLAY_STACK_ID,
+      },
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "mode_default");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+});
+
+test("assignment config facade prefers chat override when configured", () => {
+  const result = resolveAgentDefaultsFromAssignmentConfig({
+    mode: "roleplay",
+    assignmentConfig: {
+      chatStackIdOverride: PECORINO_ROLEPLAY_STACK_ID,
+      modeDefaultStackIds: {
+        roleplay: null,
+      },
+    },
+  });
+
+  assert.equal(result.mode, "roleplay");
+  assert.equal(result.source, "chat_override");
+  assert.equal(result.stackId, PECORINO_ROLEPLAY_STACK_ID);
+  assert.deepEqual(result.agentIds, [...PECORINO_ROLEPLAY_STACK_DEFAULT_AGENT_IDS]);
+});
+
+test("assignment config facade returns none for non-roleplay mode with no assignment", () => {
+  const result = resolveAgentDefaultsFromAssignmentConfig({
+    mode: "conversation",
+    assignmentConfig: {},
   });
 
   assert.equal(result.mode, "conversation");
